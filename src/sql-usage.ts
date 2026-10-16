@@ -41,7 +41,7 @@ export function extractColumnUsage(sql: string, dialect: Dialect, defaultSchema:
     if (c?.type !== 'column_ref') return;
     const name = colName(c), lower = name.toLowerCase();
     let table: string | undefined;
-    if (c.table) table = aliases[String(c.table).toLowerCase()];
+    if (c.table) table = aliases[String(c.table.value ?? c.table).toLowerCase()];   // backtick-quoted qualifier is {type, value}
     else {
       const hits = scope.filter(t => t.columns.some(x => x.toLowerCase() === lower));
       if (hits.length === 1) table = hits[0].table;

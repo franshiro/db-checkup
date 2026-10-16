@@ -47,3 +47,6 @@ test('OR keeps only usages common to every branch', () => {
     { table: 'public.orders', column: 'a', kind: 'eq' }, { table: 'public.orders', column: 'b', kind: 'range' }]);
   assert.deepEqual(u('(o.a = $1 AND o.b > $2) OR o.status = $3'), []);
 });
+test('mysql backtick-quoted qualifier resolves', () =>
+  assert.deepEqual(extractColumnUsage('SELECT * FROM `orders` `o` WHERE `o`.`customer_id` = ?', 'mysql', 'shop', [{ table: 'shop.orders', rows: 1, columns: [] }]).usage,
+    [{ table: 'shop.orders', column: 'customer_id', kind: 'eq' }]));
