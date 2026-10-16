@@ -44,7 +44,7 @@ export async function createPostgresAdapter(url: string): Promise<DbAdapter> {
       const [{ ok }] = await q(`SELECT (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) OR pg_has_role(current_user, 'pg_read_all_stats', 'MEMBER') AS ok`);
       if (!ok) warnings.push('User bukan superuser dan tidak punya role pg_read_all_stats; statistik query bisa tidak lengkap. Jalankan: GRANT pg_read_all_stats TO <user>;');
       let statsSince: Date | null = null;
-      if (num >= 140000 && await hasExtension()) statsSince = (await q('SELECT stats_reset FROM pg_stat_statements_info'))[0]?.stats_reset ?? null;
+      if (num >= 140000 && await hasExtension() && (await q(`SELECT to_regclass('pg_stat_statements_info') IS NOT NULL AS ok`))[0].ok) statsSince = (await q('SELECT stats_reset FROM pg_stat_statements_info'))[0]?.stats_reset ?? null;
       return { dialect: 'postgres', flavor: 'postgres', version, database, statsSince, warnings };
     },
 
@@ -62,10 +62,13 @@ export async function createPostgresAdapter(url: string): Promise<DbAdapter> {
     },
 
     async explain(stmt: StatementStat) {
-      if (!/^\s*(select|with)\b/i.test(stmt.query)) throw new SkipError('bukan SELECT');
+      // Conservative: a WITH containing any DML keyword (outside string literals) is refused; planning DML would lock its target table.
+      const noStrings = stmt.query.replace(/'(?:[^']|'')*'/g, "''");
+      if (!/^\s*(select|with)\b/i.test(stmt.query) || (/^\s*with\b/i.test(stmt.query) && /\b(insert|update|delete|merge)\b/i.test(noStrings))) throw new SkipError('bukan SELECT');
       const params = Math.max(0, ...[...stmt.query.matchAll(/\$(\d+)/g)].map(m => Number(m[1])));
       try {
-        await client.query(`PREPARE dbc_explain AS ${stmt.query}`);
+        // extended protocol: a multi-statement string is rejected instead of executed
+        await client.query({ text: `PREPARE dbc_explain AS ${stmt.query}`, queryMode: 'extended' });
         const rows = await q(`EXPLAIN (FORMAT JSON, VERBOSE) EXECUTE dbc_explain${params ? `(${Array(params).fill('NULL').join(', ')})` : ''}`);
         return pgScans(rows[0]['QUERY PLAN']);
       } finally { await client.query('DEALLOCATE dbc_explain').catch(() => {}); }
@@ -96,6 +99,7 @@ export async function createPostgresAdapter(url: string): Promise<DbAdapter> {
              JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) AS columns
         FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace
         WHERE c.contype = 'f' AND NOT EXISTS (SELECT 1 FROM pg_index ix WHERE ix.indrelid = c.conrelid
+          AND ix.indisvalid AND ix.indpred IS NULL AND cardinality(c.conkey) <= ix.indnkeyatts
           AND (string_to_array(ix.indkey::text, ' ')::int2[])[1:cardinality(c.conkey)] = c.conkey)
         ORDER BY 1, 2`);
     },
@@ -117,7 +121,7 @@ export async function createPostgresAdapter(url: string): Promise<DbAdapter> {
       const rows = await q(`SELECT a.pid AS waiting_pid, a.query AS waiting_query, bp.pid AS blocking_pid, b.query AS blocking_query,
           extract(epoch FROM now() - a.query_start) AS seconds
         FROM pg_stat_activity a CROSS JOIN LATERAL unnest(pg_blocking_pids(a.pid)) AS bp(pid)
-        LEFT JOIN pg_stat_activity b ON b.pid = bp.pid WHERE a.datname = current_database()`);
+        LEFT JOIN pg_stat_activity b ON b.pid = bp.pid WHERE a.datname = current_database() AND a.wait_event_type = 'Lock'`);
       return rows.map(r => ({ waitingPid: r.waiting_pid, waitingQuery: r.waiting_query, blockingPid: r.blocking_pid, blockingQuery: r.blocking_query, seconds: Number(r.seconds) }));
     },
 

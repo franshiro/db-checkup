@@ -48,3 +48,17 @@ for (const url of urls) {
     } finally { await client.end(); }
   });
 }
+
+for (const url of urls) {
+  test(`explain refuses multi-statement and DML-CTE queries (${url})`, { skip }, async () => {
+    const client = await connectWhenReady(url);
+    const adapter = await createPostgresAdapter(url);
+    const stat = (query: string) => ({ key: 'x', query, calls: 1, totalMs: 1, meanMs: 1, rows: 0 });
+    try {
+      await assert.rejects(adapter.explain(stat("SELECT 1; SET application_name = 'dbc_probe'; SELECT 1")));
+      await assert.rejects(adapter.explain(stat('WITH d AS (DELETE FROM orders RETURNING id) SELECT * FROM d')), /bukan SELECT/);
+      const { rows } = await client.query(`SELECT application_name FROM pg_stat_activity WHERE application_name IN ('db-checkup', 'dbc_probe')`);
+      assert.deepEqual(rows.map(r => r.application_name), ['db-checkup']);
+    } finally { await adapter.close(); await client.end(); }
+  });
+}
