@@ -31,7 +31,15 @@ function tokenize(sql: string, dialect: Dialect): Piece[] {
     if (c === "'" || (c === '"' && dialect === 'mysql')) { end = quoted(i, c, true); lit(); }
     else if (c === '"' || (c === '`' && dialect === 'mysql')) { end = quoted(i, c, false); code(sql.slice(i, end)); }
     else if (c === '-' && sql[i + 1] === '-') { end = sql.indexOf('\n', i); end = end < 0 ? sql.length : end; code(' '); }
-    else if (c === '/' && sql[i + 1] === '*') { const e = sql.indexOf('*/', i + 2); end = e < 0 ? sql.length : e + 2; code(' '); }
+    else if (c === '/' && sql[i + 1] === '*') {
+      // Postgres block comments nest; MySQL's do not.
+      let depth = 1;
+      for (end = i + 2; end < sql.length && depth > 0; end++) {
+        if (dialect === 'postgres' && sql.startsWith('/*', end)) { depth++; end++; }
+        else if (sql.startsWith('*/', end)) { depth--; end++; }
+      }
+      code(' ');
+    }
     else if (c === '$' && dialect === 'postgres' && at(DOLLAR_TAG, i)) {
       const tag = at(DOLLAR_TAG, i)!;
       const e = sql.indexOf(tag, i + tag.length);

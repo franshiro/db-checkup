@@ -22,3 +22,4 @@ test('hasPlaceholder', () => {
   assert.equal(hasPlaceholder("SELECT * FROM t WHERE a = ?", 'mysql'), true);
   assert.equal(hasPlaceholder("SELECT * FROM t WHERE a = 'what?'", 'mysql'), false);
 });
+test('pg nested comments dropped', () => assert.equal(m('SELECT 1 /* a /* b */ secret */ FROM t', 'postgres'), 'SELECT ? FROM t'));
