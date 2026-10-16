@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { main } from '../src/cli.js';
+import { main, redact } from '../src/cli.js';
 import { fakeAdapter } from './helpers.js';
 
 const deps = { createAdapter: async () => fakeAdapter({}) };
@@ -56,4 +56,10 @@ test('adapter closed even when analysis throws', async () => {
   const d = { createAdapter: async () => fakeAdapter({ info: async () => { throw new Error('boom'); }, close: async () => { closed++; } }) };
   assert.equal(await main(['postgres://a@h/db'], {}, capture(), d), 1);
   assert.equal(closed, 1);
+});
+test('redact: raw and percent-encoded password', () => {
+  assert.equal(redact('x p@ss y', 'postgres://a:p%40ss@h/d'), 'x *** y');
+  assert.equal(redact('x p%40ss y', 'postgres://a:p%40ss@h/d'), 'x *** y');
+  assert.equal(redact('x 100% y', 'postgres://a:100%@h/d'), 'x *** y');
+  assert.equal(redact('x', undefined), 'x');
 });

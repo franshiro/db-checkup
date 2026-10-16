@@ -38,17 +38,23 @@ const defaultCreateAdapter = (c: ConnectionConfig) =>
 const positiveInt = (s: string | undefined, fallback?: number) =>
   s === undefined ? fallback : /^[1-9]\d*$/.test(s) ? Number(s) : NaN;
 
+// Ganti password (asli dan hasil decode) di msg dengan ***.
+export function redact(msg: string, url: string | undefined): string {
+  let pw = '';
+  try { pw = url ? new URL(url).password : ''; } catch { /* url tidak valid: tidak ada password */ }
+  let decoded = pw;
+  try { decoded = decodeURIComponent(pw); } catch { /* escape rusak: cukup samarkan versi asli */ }
+  for (const s of new Set([pw, decoded])) if (s) msg = msg.split(s).join('***');
+  return msg;
+}
+
 export async function main(argv: string[], env: Record<string, string | undefined>,
   io: { stdout: Out; stderr: Out }, deps: { createAdapter(c: ConnectionConfig): Promise<DbAdapter> } = { createAdapter: defaultCreateAdapter }): Promise<number> {
   const { stdout, stderr } = io;
   let url: string | undefined;
   // Semua pesan ke stderr melewati sini: password (asli dan hasil decode) diganti ***.
   const fail = (msg: string, code: number) => {
-    let pw = '';
-    try { pw = url ? new URL(url).password : ''; } catch { /* url tidak valid: tidak ada password untuk disamarkan */ }
-    let decoded = pw;
-    try { decoded = decodeURIComponent(pw); } catch { /* escape rusak: cukup samarkan versi asli */ }
-    for (const s of new Set([pw, decoded])) if (s) msg = msg.split(s).join('***');
+    msg = redact(msg, url);
     stderr.write(msg + '\n');
     return code;
   };
@@ -94,16 +100,18 @@ export async function main(argv: string[], env: Record<string, string | undefine
   } catch (err) {
     return fail(`Error: ${(err as Error).message}`, 1);
   } finally {
-    await adapter.close().catch(() => {});
+    try { await adapter.close(); } catch { /* error close tidak boleh menutupi hasil */ }
   }
 }
 
 // Bandingkan realpath supaya tetap jalan lewat symlink bin hasil `npm install -g`.
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const io = { stdout: process.stdout, stderr: process.stderr };
-  main(process.argv.slice(2), process.env, io).then(code => { process.exitCode = code; }).catch(err => {
-    // ponytail: pesan tanpa redaksi password karena url tidak terjangkau di sini; main() menangkap semua error terkait url.
-    process.stderr.write(`Error: ${(err as Error).message}\n`);
+  const argv = process.argv.slice(2);
+  main(argv, process.env, io).then(code => { process.exitCode = code; }).catch(err => {
+    // Url tidak diketahui di sini, jadi coba semua argumen dan DATABASE_URL sebagai kandidat.
+    const msg = ([...argv, process.env.DATABASE_URL] as (string | undefined)[]).reduce((m: string, u) => redact(m, u), `Error: ${(err as Error).message}`);
+    process.stderr.write(msg + '\n');
     process.exitCode = 1;
   });
 }
