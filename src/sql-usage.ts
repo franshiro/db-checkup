@@ -37,8 +37,7 @@ export function extractColumnUsage(sql: string, dialect: Dialect, defaultSchema:
     if (r.as) aliases[String(r.as).toLowerCase()] = info.table;
   }
 
-  const usage: ColumnUsage[] = [];
-  const add = (c: any, kind: ColumnUsage['kind']) => {
+  const add = (out: ColumnUsage[], c: any, kind: ColumnUsage['kind']) => {
     if (c?.type !== 'column_ref') return;
     const name = colName(c), lower = name.toLowerCase();
     let table: string | undefined;
@@ -49,18 +48,24 @@ export function extractColumnUsage(sql: string, dialect: Dialect, defaultSchema:
     }
     if (!table || !name || name === '*') return;
     const column = tables.find(t => t.table === table)?.columns.find(x => x.toLowerCase() === lower) ?? lower;
-    if (!usage.some(u => u.table === table && u.column === column && u.kind === kind)) usage.push({ table, column, kind });
+    if (!out.some(u => u.table === table && u.column === column && u.kind === kind)) out.push({ table, column, kind });
   };
-  const walk = (e: any) => {
+  const walk = (e: any, out: ColumnUsage[]) => {
     if (e?.type !== 'binary_expr') return;
     const op = String(e.operator).toUpperCase();
-    if (op === 'AND' || op === 'OR') { walk(e.left); walk(e.right); }
-    else if (EQ.has(op)) { add(e.left, 'eq'); add(e.right, 'eq'); }   // right is a column only in join conditions
-    else if (RANGE.has(op)) add(e.left, 'range');
+    if (op === 'AND') { walk(e.left, out); walk(e.right, out); }
+    else if (op === 'OR') {   // only usages common to every branch can back one index
+      const l: ColumnUsage[] = [], r: ColumnUsage[] = [];
+      walk(e.left, l); walk(e.right, r);
+      for (const u of l) if (r.some(v => v.table === u.table && v.column === u.column && v.kind === u.kind)) out.push(u);
+    }
+    else if (EQ.has(op)) { add(out, e.left, 'eq'); add(out, e.right, 'eq'); }   // right is a column only in join conditions
+    else if (RANGE.has(op)) add(out, e.left, 'range');
   };
 
-  for (const r of refs) walk(r.on);
-  walk(ast.where);
-  for (const o of ast.orderby ?? []) add(o.expr, 'order');
+  const usage: ColumnUsage[] = [];
+  for (const r of refs) walk(r.on, usage);
+  walk(ast.where, usage);
+  for (const o of ast.orderby ?? []) add(usage, o.expr, 'order');
   return { aliases, usage };
 }

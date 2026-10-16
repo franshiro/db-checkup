@@ -38,3 +38,12 @@ test('update/delete use where; between/like are range; case-insensitive; dedupe'
     { table: 'public.orders', column: 'created_at', kind: 'range' },
     { table: 'public.orders', column: 'status', kind: 'range' }]);
 });
+test('OR keeps only usages common to every branch', () => {
+  const t: TableInfo[] = [{ table: 'public.orders', rows: 50000, columns: ['a', 'b', 'status'] }];
+  const u = (where: string) => extractColumnUsage(`SELECT * FROM orders o WHERE ${where}`, 'postgres', 'public', t).usage;
+  assert.deepEqual(u('o.a = $1 OR o.a = $2'), [{ table: 'public.orders', column: 'a', kind: 'eq' }]);
+  assert.deepEqual(u('a = $1 OR b = $2'), []);
+  assert.deepEqual(u('(o.a = $1 AND o.b > $2) OR (o.a = $3 AND o.b > $4)'), [
+    { table: 'public.orders', column: 'a', kind: 'eq' }, { table: 'public.orders', column: 'b', kind: 'range' }]);
+  assert.deepEqual(u('(o.a = $1 AND o.b > $2) OR o.status = $3'), []);
+});
