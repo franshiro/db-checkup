@@ -20,16 +20,19 @@ const INDEXES_SQL = `
     JOIN pg_class i ON i.oid = ix.indexrelid
     JOIN pg_class t ON t.oid = ix.indrelid
     JOIN pg_namespace n ON n.oid = t.relnamespace
-   WHERE t.relkind IN ('r','p') AND n.nspname NOT IN ('pg_catalog','information_schema')`;
+   WHERE t.relkind IN ('r','p') AND ix.indisvalid AND ix.indpred IS NULL AND n.nspname NOT IN ('pg_catalog','information_schema')`;
 
-export async function createPostgresAdapter(url: string): Promise<DbAdapter> {
-  const client = new pg.Client({ connectionString: url });
+// Tag on every statement we send, so isOwnOrSystemQuery can hide them from pg_stat_statements results.
+const TAG = '/* db-checkup */ ';
+
+export async function createPostgresAdapter(url: string, connectTimeoutMs = 10000): Promise<DbAdapter> {
+  const client = new pg.Client({ connectionString: url, connectionTimeoutMillis: connectTimeoutMs });
   await client.connect();
   try {
     for (const s of ["SET application_name = 'db-checkup'", 'SET default_transaction_read_only = on', 'SET statement_timeout = 5000',
-      'SET lock_timeout = 2000', 'SET plan_cache_mode = force_generic_plan']) await client.query(s);
+      'SET lock_timeout = 2000', 'SET plan_cache_mode = force_generic_plan']) await client.query(TAG + s);
   } catch (err) { await client.end().catch(() => {}); throw err; }
-  const q = async (sql: string, params: unknown[] = []) => (await client.query(sql, params)).rows;
+  const q = async (sql: string, params: unknown[] = []) => (await client.query(TAG + sql, params)).rows;
   const versionNum = async () => Number((await q('SHOW server_version_num'))[0].server_version_num);
   const hasExtension = async () => (await q(`SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements'`)).length > 0;
 
@@ -68,10 +71,10 @@ export async function createPostgresAdapter(url: string): Promise<DbAdapter> {
       const params = Math.max(0, ...[...stmt.query.matchAll(/\$(\d+)/g)].map(m => Number(m[1])));
       try {
         // extended protocol: a multi-statement string is rejected instead of executed
-        await client.query({ text: `PREPARE dbc_explain AS ${stmt.query}`, queryMode: 'extended' } as pg.QueryConfig);
+        await client.query({ text: `${TAG}PREPARE dbc_explain AS ${stmt.query}`, queryMode: 'extended' } as pg.QueryConfig);
         const rows = await q(`EXPLAIN (FORMAT JSON, VERBOSE) EXECUTE dbc_explain${params ? `(${Array(params).fill('NULL').join(', ')})` : ''}`);
         return pgScans(rows[0]['QUERY PLAN']);
-      } finally { await client.query('DEALLOCATE dbc_explain').catch(() => {}); }
+      } finally { await client.query(`${TAG}DEALLOCATE dbc_explain`).catch(() => {}); }
     },
 
     async tables(): Promise<TableInfo[]> {

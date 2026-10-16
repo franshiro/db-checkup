@@ -16,7 +16,7 @@ const NO_SYS = 'schema sys tidak tersedia';
 
 export async function createMysqlAdapter(opts: MysqlOptions): Promise<DbAdapter> {
   // multipleStatements stays off: EXPLAIN of a sample containing ';' must not run a second statement.
-  const conn = await mysql.createConnection({ ...opts, multipleStatements: false });
+  const conn = await mysql.createConnection({ connectTimeout: 10000, ...opts, multipleStatements: false });
   const q = async (sql: string, params: unknown[] = []) => (await conn.query<RowDataPacket[]>(sql, params))[0];
   let version: string, mariadb: boolean, hasSample: boolean, maxSqlText: number;
   try {
@@ -27,6 +27,7 @@ export async function createMysqlAdapter(opts: MysqlOptions): Promise<DbAdapter>
     hasSample = (await q(`SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'performance_schema'
       AND TABLE_NAME = 'events_statements_summary_by_digest' AND COLUMN_NAME = 'QUERY_SAMPLE_TEXT'`)).length > 0;
     maxSqlText = Number((await q('SELECT @@performance_schema_max_sql_text_length AS n'))[0].n);
+    if (!Number.isFinite(maxSqlText)) maxSqlText = 0;   // fail closed: every sample counts as truncated
   } catch (err) { await conn.end().catch(() => {}); throw err; }
   const hasSys = async () => (await q(`SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = 'sys'`)).length > 0;
   const indexes = async (): Promise<IndexInfo[]> => {

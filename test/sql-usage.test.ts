@@ -31,12 +31,11 @@ test('mysql digest with IN (...)', () => {
 });
 test('unparseable throws SqlParseError', () =>
   assert.throws(() => extractColumnUsage('SELEC nonsense ((', 'postgres', 'public', pgTables), SqlParseError));
-test('update/delete use where; between/like are range; case-insensitive; dedupe', () => {
+test('update/delete use where; between is range, like is not; case-insensitive; dedupe', () => {
   assert.deepEqual(extractColumnUsage('UPDATE Orders SET status = $1 WHERE ID = $2', 'postgres', 'public', pgTables).usage,
     [{ table: 'public.orders', column: 'id', kind: 'eq' }]);
-  assert.deepEqual(extractColumnUsage('DELETE FROM orders WHERE created_at BETWEEN $1 AND $2 AND status LIKE $3 AND status LIKE $4', 'postgres', 'public', pgTables).usage, [
-    { table: 'public.orders', column: 'created_at', kind: 'range' },
-    { table: 'public.orders', column: 'status', kind: 'range' }]);
+  assert.deepEqual(extractColumnUsage('DELETE FROM orders WHERE created_at BETWEEN $1 AND $2 AND status LIKE $3', 'postgres', 'public', pgTables).usage, [
+    { table: 'public.orders', column: 'created_at', kind: 'range' }]);
 });
 test('OR keeps only usages common to every branch', () => {
   const t: TableInfo[] = [{ table: 'public.orders', rows: 50000, columns: ['a', 'b', 'status'] }];

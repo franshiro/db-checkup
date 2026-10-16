@@ -19,9 +19,10 @@ test('isOwnOrSystemQuery', () => {
   for (const q of ['EXPLAIN SELECT 1', 'SET statement_timeout = 5000', 'PREPARE x AS SELECT 1', 'DEALLOCATE x', 'SHOW server_version_num',
                    'SELECT * FROM pg_stat_statements', 'SELECT * FROM performance_schema.processlist', 'SELECT * FROM information_schema.TABLES',
                    'SELECT * FROM sys.innodb_lock_waits', 'SELECT oid FROM pg_catalog.pg_class',
-                   'SELECT ix.indexrelid FROM pg_index ix', 'SELECT VERSION()', 'SELECT version()', 'SELECT @@transaction_read_only',
+                   '/* db-checkup */ SELECT ix.indexrelid FROM pg_index ix', 'SELECT @@`transaction_read_only`', 'SELECT VERSION()', 'SELECT version()', 'SELECT @@transaction_read_only',
                    'SELECT `VERSION` ( ) AS `v`', 'SELECT `a` FROM `sys` . `innodb_lock_waits`'])
     assert.equal(isOwnOrSystemQuery(q), true, q);
   assert.equal(isOwnOrSystemQuery('SELECT * FROM t WHERE tsv @@ to_tsquery($1)'), false);
+  for (const q of ['SELECT pg_advisory_lock($1)', 'SELECT pg_notify($1, $2)']) assert.equal(isOwnOrSystemQuery(q), false, q);
   assert.equal(isOwnOrSystemQuery('SELECT * FROM orders WHERE customer_id = $1'), false);
 });

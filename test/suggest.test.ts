@@ -35,6 +35,9 @@ test('quoting, non-default schema, name length', () => {
 });
 test('usage on table not in tables (CTE) yields nothing', () =>
   assert.deepEqual(suggestIndexes({ ...base, query: 'WITH c AS (SELECT 1 AS x) SELECT * FROM c WHERE x = 1', scans: null }), []));
+test('LIKE predicate yields no suggestion', () =>
+  assert.deepEqual(suggestIndexes({ ...base, query: 'SELECT * FROM customers WHERE email LIKE $1', scans: [{ table: 'public.customers' }],
+    tables: [{ table: 'public.customers', rows: 50000, columns: ['id', 'email'] }] }), []));
 test('no plan, case-insensitive match, duplicates deduped', () => {
   const [s] = suggestIndexes({ ...base, query: 'SELECT * FROM Orders WHERE customer_id = $1 AND customer_id = $2', scans: null, noPlanReason: 'x' });
   assert.deepEqual(s.columns, ['customer_id']);

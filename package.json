@@ -13,6 +13,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "prepare": "npm run build",
     "test": "node --import tsx --test test/*.test.ts",
     "test:it": "DB_CHECKUP_IT=1 node --import tsx --test --test-concurrency=1 test/integration/*.test.ts"
   },

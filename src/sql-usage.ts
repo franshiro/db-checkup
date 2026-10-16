@@ -4,7 +4,7 @@ import type { ColumnUsage, Dialect, TableInfo } from './types.js';
 export class SqlParseError extends Error {}
 
 const EQ = new Set(['=', 'IN']);
-const RANGE = new Set(['<', '>', '<=', '>=', 'BETWEEN', 'LIKE']);
+const RANGE = new Set(['<', '>', '<=', '>=', 'BETWEEN']);
 
 export function normalizeDigest(digest: string): string {
   return digest.replace(/\bIN\s*\(\s*\.\.\.\s*\)/gi, 'IN (?)');

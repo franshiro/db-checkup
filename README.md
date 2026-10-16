@@ -7,7 +7,7 @@ CLI untuk memeriksa database Postgres dan MySQL/MariaDB: query paling lambat, sa
 ## Install
 
 ```sh
-npm install -g .      # dari repo ini
+npm install && npm run build && npm install -g .   # dari repo ini
 npx db-checkup ...    # setelah dipublish
 ```
 
@@ -43,3 +43,9 @@ Kalau hak akses kurang, bagian terkait dilewati dan alasannya ditulis di report.
   ```
 
 Untuk MySQL, tambahkan `?ssl=true` (atau `?ssl=skip-verify`) di connection string kalau server butuh TLS.
+
+Untuk Postgres di cloud (RDS, Cloud SQL), server memakai CA privat. Perhatikan bahwa `sslmode=require` di driver `pg` berarti `verify-full` (sertifikat diverifikasi), jadi koneksi gagal kalau CA tidak dikenal. Pilihannya:
+
+- `?sslmode=verify-full&sslrootcert=/path/ca.pem` (disarankan: terenkripsi dan diverifikasi)
+- `?sslmode=no-verify` (terenkripsi, tanpa verifikasi sertifikat)
+- `?uselibpqcompat=true&sslmode=require` (perilaku sama dengan libpq/psql: terenkripsi, tanpa verifikasi)

@@ -33,7 +33,7 @@ export function diffStatements(before: StatementStat[], after: StatementStat[]):
 
 const OWN_PREFIX = /^\s*(EXPLAIN|SET|PREPARE|DEALLOCATE|SHOW|BEGIN|COMMIT|ROLLBACK)\b/i;
 // MySQL digests quote and space identifiers (`sys` . `x`, `VERSION` ( )), hence the optional backticks/whitespace.
-const SYSTEM_REF = /\bpg_[a-z_]+\b|information_schema|performance_schema|\b(sys|mysql)`?\s*\.\s*`?\w|@@\w|\b(version|connection_id)`?\s*\(/i;
+const SYSTEM_REF = /\/\* db-checkup \*\/|pg_catalog|pg_stat_|information_schema|performance_schema|\b(sys|mysql)`?\s*\.\s*`?\w|@@`?\w|\b(version|connection_id)`?\s*\(/i;
 
 export function isOwnOrSystemQuery(sql: string): boolean {
   return OWN_PREFIX.test(sql) || SYSTEM_REF.test(sql);
