@@ -44,10 +44,11 @@ export async function main(argv: string[], env: Record<string, string | undefine
   let url: string | undefined;
   // Semua pesan ke stderr melewati sini: password (asli dan hasil decode) diganti ***.
   const fail = (msg: string, code: number) => {
-    try {
-      const pw = url ? new URL(url).password : '';
-      for (const s of new Set([pw, decodeURIComponent(pw)])) if (s) msg = msg.split(s).join('***');
-    } catch { /* url tidak valid: tidak ada password untuk disamarkan */ }
+    let pw = '';
+    try { pw = url ? new URL(url).password : ''; } catch { /* url tidak valid: tidak ada password untuk disamarkan */ }
+    let decoded = pw;
+    try { decoded = decodeURIComponent(pw); } catch { /* escape rusak: cukup samarkan versi asli */ }
+    for (const s of new Set([pw, decoded])) if (s) msg = msg.split(s).join('***');
     stderr.write(msg + '\n');
     return code;
   };
@@ -93,11 +94,16 @@ export async function main(argv: string[], env: Record<string, string | undefine
   } catch (err) {
     return fail(`Error: ${(err as Error).message}`, 1);
   } finally {
-    await adapter.close();
+    await adapter.close().catch(() => {});
   }
 }
 
 // Bandingkan realpath supaya tetap jalan lewat symlink bin hasil `npm install -g`.
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main(process.argv.slice(2), process.env, process).then(code => { process.exitCode = code; });
+  const io = { stdout: process.stdout, stderr: process.stderr };
+  main(process.argv.slice(2), process.env, io).then(code => { process.exitCode = code; }).catch(err => {
+    // ponytail: pesan tanpa redaksi password karena url tidak terjangkau di sini; main() menangkap semua error terkait url.
+    process.stderr.write(`Error: ${(err as Error).message}\n`);
+    process.exitCode = 1;
+  });
 }

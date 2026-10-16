@@ -22,3 +22,5 @@ test('redactUrl hides password only', () => {
   assert.equal(redactUrl('postgres://app:secret@h/db'), 'postgres://app:***@h/db');
   assert.equal(redactUrl('mysql://app@h/db'), 'mysql://app@h/db');
 });
+test('malformed %-escape -> Indonesian error without url', () =>
+  assert.throws(() => parseConnectionUrl('mysql://root:pa%zzss@h/db'), (e: Error) => /escape persen/.test(e.message) && !e.message.includes('pa%zzss')));

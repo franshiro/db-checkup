@@ -41,6 +41,16 @@ test('connection failure -> 1, password redacted in message', async () => {
   assert.equal(await main(['postgres://app:secret@h/shop'], {}, io, failing), 1);
   assert.match(io.err(), /^Gagal konek ke database:/); assert.ok(!io.err().includes('secret'));
 });
+test('password with malformed %-escape still redacted', async () => {
+  const io = capture();
+  const failing = { createAdapter: async () => { throw new Error('auth failed, password 100% wrong'); } };
+  assert.equal(await main(['postgres://app:100%@h/shop'], {}, io, failing), 1);
+  assert.ok(!io.err().includes('100%'), io.err());
+});
+test('close() error is swallowed', async () => {
+  const d = { createAdapter: async () => fakeAdapter({ close: async () => { throw new Error('close boom'); } }) };
+  assert.equal(await main(['postgres://a@h/db'], {}, capture(), d), 0);
+});
 test('adapter closed even when analysis throws', async () => {
   let closed = 0;
   const d = { createAdapter: async () => fakeAdapter({ info: async () => { throw new Error('boom'); }, close: async () => { closed++; } }) };

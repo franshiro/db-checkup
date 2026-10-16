@@ -3,6 +3,10 @@ export type ConnectionConfig =
   | { dialect: 'postgres'; url: string; database: string }
   | { dialect: 'mysql'; database: string; mysql: MysqlOptions };
 
+function decode(s: string): string {
+  try { return decodeURIComponent(s); } catch { throw new Error('Connection string tidak valid: ada escape persen (%) yang rusak di user, password, atau nama database.'); }
+}
+
 // Pesan error sengaja tidak memuat URL asli (bisa berisi password).
 function toUrl(url: string): URL {
   try {
@@ -14,9 +18,9 @@ function toUrl(url: string): URL {
 
 export function parseConnectionUrl(url: string): ConnectionConfig {
   const u = toUrl(url);
-  const dbName = decodeURIComponent(u.pathname.replace(/^\//, ''));
+  const dbName = decode(u.pathname.replace(/^\//, ''));
   if (u.protocol === 'postgres:' || u.protocol === 'postgresql:') {
-    return { dialect: 'postgres', url, database: dbName || decodeURIComponent(u.username) };
+    return { dialect: 'postgres', url, database: dbName || decode(u.username) };
   }
   if (u.protocol === 'mysql:') {
     if (!dbName) throw new Error('Connection string MySQL harus menyertakan nama database, mis. mysql://user@host/nama_db');
@@ -24,8 +28,8 @@ export function parseConnectionUrl(url: string): ConnectionConfig {
     const mysql: MysqlOptions = {
       host: u.hostname,
       port: u.port ? Number(u.port) : 3306,
-      user: decodeURIComponent(u.username),
-      password: decodeURIComponent(u.password),
+      user: decode(u.username),
+      password: decode(u.password),
       database: dbName,
     };
     if (ssl === 'true') mysql.ssl = {};

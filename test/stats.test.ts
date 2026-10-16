@@ -22,5 +22,6 @@ test('isOwnOrSystemQuery', () => {
                    'SELECT ix.indexrelid FROM pg_index ix', 'SELECT VERSION()', 'SELECT version()', 'SELECT @@transaction_read_only',
                    'SELECT `VERSION` ( ) AS `v`', 'SELECT `a` FROM `sys` . `innodb_lock_waits`'])
     assert.equal(isOwnOrSystemQuery(q), true, q);
+  assert.equal(isOwnOrSystemQuery('SELECT * FROM t WHERE tsv @@ to_tsquery($1)'), false);
   assert.equal(isOwnOrSystemQuery('SELECT * FROM orders WHERE customer_id = $1'), false);
 });
