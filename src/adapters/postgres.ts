@@ -68,7 +68,7 @@ export async function createPostgresAdapter(url: string): Promise<DbAdapter> {
       const params = Math.max(0, ...[...stmt.query.matchAll(/\$(\d+)/g)].map(m => Number(m[1])));
       try {
         // extended protocol: a multi-statement string is rejected instead of executed
-        await client.query({ text: `PREPARE dbc_explain AS ${stmt.query}`, queryMode: 'extended' });
+        await client.query({ text: `PREPARE dbc_explain AS ${stmt.query}`, queryMode: 'extended' } as pg.QueryConfig);
         const rows = await q(`EXPLAIN (FORMAT JSON, VERBOSE) EXECUTE dbc_explain${params ? `(${Array(params).fill('NULL').join(', ')})` : ''}`);
         return pgScans(rows[0]['QUERY PLAN']);
       } finally { await client.query('DEALLOCATE dbc_explain').catch(() => {}); }
