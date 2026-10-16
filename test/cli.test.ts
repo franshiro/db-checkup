@@ -35,6 +35,16 @@ test('DATABASE_URL used, password never printed, file written', async () => {
   assert.ok(!io.out().includes('secret') && !md.includes('secret'));
   assert.ok(md.includes('postgres://app:***@h/shop'));
 });
+test('password in query param never printed', async () => {
+  const io = capture(); const file = join(dir, 'q.md');
+  const url = 'postgres://app@h/shop?password=s3cretQ&sslmode=require';
+  assert.equal(await main([url, '--output', file], {}, io, deps), 0);
+  const failing = { createAdapter: async () => { throw new Error(`bad ${url}`); } };
+  const io2 = capture();
+  assert.equal(await main([url], {}, io2, failing), 1);
+  const md = await readFile(file, 'utf8');
+  for (const t of [io.out(), io.err(), io2.err(), md]) assert.ok(!t.includes('s3cretQ'), t);
+});
 test('connection failure -> 1, password redacted in message', async () => {
   const io = capture();
   const failing = { createAdapter: async () => { throw new Error('connect ECONNREFUSED for postgres://app:secret@h/shop'); } };

@@ -40,11 +40,16 @@ const positiveInt = (s: string | undefined, fallback?: number) =>
 
 // Ganti password (asli dan hasil decode) di msg dengan ***.
 export function redact(msg: string, url: string | undefined): string {
-  let pw = '';
-  try { pw = url ? new URL(url).password : ''; } catch { /* url tidak valid: tidak ada password */ }
-  let decoded = pw;
-  try { decoded = decodeURIComponent(pw); } catch { /* escape rusak: cukup samarkan versi asli */ }
-  for (const s of new Set([pw, decoded])) if (s) msg = msg.split(s).join('***');
+  const secrets = new Set<string>();
+  try {
+    const u = new URL(url ?? '');
+    for (const pw of [u.password, u.searchParams.get('password'), u.searchParams.get('sslpassword')]) {
+      if (!pw) continue;
+      secrets.add(pw);
+      try { secrets.add(decodeURIComponent(pw)); } catch { /* escape rusak: cukup samarkan versi asli */ }
+    }
+  } catch { /* url tidak valid: tidak ada password */ }
+  for (const s of secrets) if (s) msg = msg.split(s).join('***');
   return msg;
 }
 
@@ -91,8 +96,9 @@ export async function main(argv: string[], env: Record<string, string | undefine
   try {
     const result = await analyze(adapter, {
       connection: redactUrl(url), top: top!, watchSeconds,
-      onTick: n => { if (stderr.isTTY) stderr.write(`\rMenunggu snapshot kedua: ${n} detik…`); },
+      onTick: n => { if (stderr.isTTY) stderr.write(`\r\x1b[KMenunggu snapshot kedua: ${n} detik…`); },
     });
+    if (watchSeconds && stderr.isTTY) stderr.write('\r\x1b[K');
     const report = buildReport(result, { mask: !values['no-mask'] });
     stdout.write(renderTerminal(report, { color: !!stdout.isTTY && !env.NO_COLOR }));
     if (values.output) await writeFile(values.output, renderMarkdown(report));

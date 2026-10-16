@@ -34,6 +34,7 @@ export function parseConnectionUrl(url: string): ConnectionConfig {
     };
     if (ssl === 'true') mysql.ssl = {};
     else if (ssl === 'skip-verify') mysql.ssl = { rejectUnauthorized: false };
+    else if (ssl !== null) throw new Error('Nilai ssl tidak dikenal. Gunakan ssl=true atau ssl=skip-verify.');
     return { dialect: 'mysql', database: dbName, mysql };
   }
   throw new Error('Scheme tidak didukung. Gunakan postgres:// atau mysql://');
@@ -43,5 +44,6 @@ export function redactUrl(url: string): string {
   let u: URL;
   try { u = new URL(url); } catch { return '[connection string tidak valid]'; }
   if (u.password) u.password = '***';
+  for (const k of ['password', 'sslpassword']) if (u.searchParams.has(k)) u.searchParams.set(k, '***');
   return u.toString();
 }

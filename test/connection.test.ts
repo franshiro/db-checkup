@@ -18,6 +18,14 @@ test('mysql without database throws', () =>
   assert.throws(() => parseConnectionUrl('mysql://root@h/'), /nama database/));
 test('unknown scheme throws', () =>
   assert.throws(() => parseConnectionUrl('redis://h'), /postgres:\/\/ atau mysql:\/\//));
+test('redactUrl masks password query params', () => {
+  const r = redactUrl('postgres://u@h/db?password=secret&sslpassword=key&sslmode=require');
+  assert.ok(!r.includes('secret') && !r.includes('key'), r);
+  assert.ok(r.includes('sslmode=require') && r.includes('password=***'), r);
+});
+test('unknown mysql ssl value throws without leaking url', () => {
+  assert.throws(() => parseConnectionUrl('mysql://u:pw123@h/db?ssl=ture'), (e: Error) => /ssl/.test(e.message) && !e.message.includes('pw123'));
+});
 test('redactUrl hides password only', () => {
   assert.equal(redactUrl('postgres://app:secret@h/db'), 'postgres://app:***@h/db');
   assert.equal(redactUrl('mysql://app@h/db'), 'mysql://app@h/db');
