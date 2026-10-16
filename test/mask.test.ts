@@ -23,3 +23,12 @@ test('hasPlaceholder', () => {
   assert.equal(hasPlaceholder("SELECT * FROM t WHERE a = 'what?'", 'mysql'), false);
 });
 test('pg nested comments dropped', () => assert.equal(m('SELECT 1 /* a /* b */ secret */ FROM t', 'postgres'), 'SELECT ? FROM t'));
+test('mysql # comment dropped, pg # kept', () => {
+  assert.equal(m("SELECT 1 # token='abc'\nFROM t", 'mysql'), 'SELECT ? FROM t');
+  assert.equal(m('SELECT a # b FROM t', 'postgres'), 'SELECT a # b FROM t');
+});
+test('pg backslash only escapes in E strings', () => {
+  assert.equal(m("WHERE a = 'a\\' AND x = 'secret'", 'postgres'), 'WHERE a = ? AND x = ?');
+  assert.equal(m("WHERE a = E'it\\'s' AND b = 1", 'postgres'), 'WHERE a = ? AND b = ?');
+});
+test('pg unicode dollar tag', () => assert.equal(m('SELECT $é$secret$é$', 'postgres'), 'SELECT ?'));
