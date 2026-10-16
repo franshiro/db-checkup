@@ -54,9 +54,9 @@ export function buildReport(r: AnalysisResult, opts: { mask: boolean }): Report 
   sections.push(list('Foreign key tanpa index', r.foreignKeys, ['Tabel', 'Constraint', 'Kolom'], f => [f.table, f.constraint, f.columns.join(', ')]));
   sections.push(list('Index yang tidak pernah dipakai', r.unusedIndexes, ['Tabel', 'Index', 'Kolom'], i => [i.table, i.name, i.columns.join(', ')]));
   sections.push(list(`Query yang sedang jalan lama (> ${LONG_RUNNING_SECONDS} detik)`, r.running, ['PID', 'User', 'Detik', 'Status', 'Query'],
-    q => [String(q.pid), q.user, formatCount(q.seconds), q.state, preview(q.query)]));
+    q => [String(q.pid), q.user, formatCount(Math.round(q.seconds)), q.state, preview(q.query)]));
   sections.push(list('Query yang saling mengunci', r.locks, ['PID menunggu', 'Query menunggu', 'PID pengunci', 'Query pengunci', 'Detik'],
-    l => [String(l.waitingPid), preview(l.waitingQuery), String(l.blockingPid), l.blockingQuery === null ? '-' : preview(l.blockingQuery), formatCount(l.seconds)]));
+    l => [String(l.waitingPid), preview(l.waitingQuery), String(l.blockingPid), l.blockingQuery === null ? '-' : preview(l.blockingQuery), formatCount(Math.round(l.seconds))]));
 
   const i = r.info;
   const summary: Block[] = [

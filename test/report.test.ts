@@ -14,6 +14,13 @@ function sampleResult(o: Partial<AnalysisResult>): AnalysisResult {
   };
 }
 const titles = (r: Report) => r.sections.map(s => s.title);
+test('running/lock seconds are whole numbers', () => {
+  const q = 'SELECT 1';
+  const md = renderMarkdown(buildReport(sampleResult({
+    running: { ok: true, value: [{ pid: 1, user: 'a', seconds: 6.681, state: 'active', query: q }] },
+    locks: { ok: true, value: [{ waitingPid: 1, waitingQuery: q, blockingPid: 2, blockingQuery: q, seconds: 3.4 }] } }), { mask: true }));
+  assert.ok(md.includes('| 7 |') && md.includes('| 3 |') && !md.includes('6,681'), md);
+});
 test('section order with --watch', () =>
   assert.deepEqual(titles(buildReport(sampleResult({ watchSeconds: 60, current: { ok: true, value: [] } }), { mask: true })), [
     'Ringkasan', 'Query terberat saat ini (60 detik terakhir)', 'Query paling lambat (akumulasi)', 'Saran index',

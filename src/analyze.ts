@@ -11,7 +11,12 @@ export async function analyze(adapter: DbAdapter, opts: { connection: string; to
   const { top, watchSeconds, sleep = (ms: number) => delay(ms), onTick } = opts;
   const { dialect } = adapter;
   const why = (err: unknown) => err instanceof SkipError ? err.message
-    : adapter.describeError(err) ?? `Gagal: ${maskSql(err instanceof Error ? err.message : String(err), dialect)}`;
+    : adapter.describeError(err) ?? `Gagal: ${maskError(err)}`;
+  // Postgres error messages quote values with "..."; maskSql treats those as identifiers, so blank them here.
+  const maskError = (err: unknown) => {
+    const m = err instanceof Error ? err.message : String(err);
+    return maskSql(dialect === 'postgres' ? m.replace(/"[^"]*"/g, '"?"') : m, dialect);
+  };
   const run = async <T>(fn: () => Promise<T>): Promise<Outcome<T>> => {
     try { return { ok: true, value: await fn() }; } catch (err) { return { ok: false, reason: why(err) }; }
   };
@@ -37,12 +42,12 @@ export async function analyze(adapter: DbAdapter, opts: { connection: string; to
     const items: Suggestion[] = [], skipped: { query: string; reason: string }[] = [];
     for (const stat of uniq.values()) {
       let scans: PlanScan[] | null = null, noPlanReason: string | undefined;
-      try { scans = await adapter.explain(stat); } catch (err) { noPlanReason = err instanceof SkipError ? err.message : maskSql(err instanceof Error ? err.message : String(err), dialect); }
+      try { scans = await adapter.explain(stat); } catch (err) { noPlanReason = err instanceof SkipError ? err.message : maskError(err); }
       try {
         for (const s of suggestIndexes({ query: stat.query, dialect, defaultSchema: adapter.defaultSchema, scans, noPlanReason: noPlanReason ?? '', tables, indexes })) items.push({ query: stat.query, ...s });
       } catch (err) {
         if (!(err instanceof SqlParseError)) throw err;
-        skipped.push({ query: stat.query, reason: 'SQL tidak bisa di-parse' });
+        if (/^\s*(select|with|update|delete)\b/i.test(stat.query)) skipped.push({ query: stat.query, reason: 'SQL tidak bisa di-parse' });
       }
     }
     return { items, skipped };

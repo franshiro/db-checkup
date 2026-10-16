@@ -34,11 +34,19 @@ test('watch: ticks each second then diffs', async () => {
 test('explain failure falls back to rendah; parse failure goes to skipped', async () => {
   const st = (key: string, q: string) => ({ key, query: q, calls: 1, totalMs: 10, meanMs: 10, rows: 0 });
   const r = await analyze(fakeAdapter({
-    statements: async () => [st('1', 'SELECT * FROM orders WHERE customer_id = $1'), st('2', 'SELEC ((')],
+    statements: async () => [st('1', 'SELECT * FROM orders WHERE customer_id = $1'), st('2', 'SELECT nonsense ((')],
     explain: async () => { throw new Error('could not determine data type of parameter $1'); },
     tables: async () => [{ table: 'public.orders', rows: 50000, columns: ['customer_id'] }] }), { connection: 'c', top: 10 });
   assert.ok(r.suggestions.ok);
   assert.equal(r.suggestions.value.items[0].confidence, 'rendah');
   assert.match(r.suggestions.value.items[0].reason, /could not determine data type/);
   assert.equal(r.suggestions.value.skipped[0].reason, 'SQL tidak bisa di-parse');
+});
+test('unparseable non-SELECT/DML statements are skipped silently', async () => {
+  const r = await analyze(fakeAdapter({ statements: async () => [{ key: '1', query: 'ANALYZE ((', calls: 1, totalMs: 10, meanMs: 10, rows: 0 }] }), { connection: 'c', top: 10 });
+  assert.ok(r.suggestions.ok && r.suggestions.value.skipped.length === 0);
+});
+test('postgres error messages: double-quoted values are masked', async () => {
+  const r = await analyze(fakeAdapter({ statements: async () => { throw new Error('invalid input syntax for type integer: "budi@x.com"'); } }), { connection: 'c', top: 10 });
+  assert.ok(!r.cumulative.ok && !r.cumulative.reason.includes('budi'), JSON.stringify(r.cumulative));
 });
