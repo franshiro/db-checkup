@@ -12,3 +12,14 @@ services:
     environment: { POSTGRES_PASSWORD: test }
     ports: ['54316:5432']
     volumes: ['./test/fixtures/pg-init.sql:/docker-entrypoint-initdb.d/init.sql:ro']
+  mysql80:
+    image: mysql:8.0
+    environment: { MYSQL_ROOT_PASSWORD: test, MYSQL_DATABASE: shop }
+    ports: ['33080:3306']
+    volumes: ['./test/fixtures/mysql-init.sql:/docker-entrypoint-initdb.d/init.sql:ro']
+  mariadb:
+    image: mariadb:10.11
+    command: --performance-schema=ON
+    environment: { MARIADB_ROOT_PASSWORD: test, MARIADB_DATABASE: shop }
+    ports: ['33110:3306']
+    volumes: ['./test/fixtures/mysql-init.sql:/docker-entrypoint-initdb.d/init.sql:ro']
