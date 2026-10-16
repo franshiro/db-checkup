@@ -66,6 +66,15 @@ for (const { name, opts } of servers) {
     const adapterId = (await ids()).find(id => !others.includes(id))!;
     const stat = (sample: string) => ({ key: 'x', query: sample, sample, calls: 1, totalMs: 1, meanMs: 1, rows: 0 });
     try {
+      if (name === 'mariadb') {   // plans are never used on MariaDB, so the server-side checks below only apply to mysql80
+        await assert.rejects(adapter.explain(stat('SELECT * FROM orders WHERE customer_id = 42')), /MariaDB: rencana eksekusi tidak dipakai/);
+        return;
+      }
+      // multibyte sample: few chars, but bytes at the limit -> truncated
+      const limit = Number(((await client.query('SELECT @@performance_schema_max_sql_text_length AS n'))[0] as { n: number }[])[0].n);
+      const multibyte = "SELECT '" + 'é'.repeat(Math.ceil(limit / 2) - 6) + "'";
+      assert.ok(multibyte.length < limit && Buffer.byteLength(multibyte) >= limit - 3);
+      await assert.rejects(adapter.explain(stat(multibyte)), /contoh query terpotong/);
       // rejected by the server's parser (1064): the second statement never runs
       await assert.rejects(adapter.explain(stat("SELECT 1; SET SESSION sql_mode=''")), { errno: 1064 });
       await assert.rejects(adapter.explain(stat('SELECT 1; SET @dbc_probe = 1')), { errno: 1064 });
