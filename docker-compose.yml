@@ -1,0 +1,14 @@
+name: db-checkup
+services:
+  pg12:
+    image: postgres:12
+    command: postgres -c shared_preload_libraries=pg_stat_statements
+    environment: { POSTGRES_PASSWORD: test }
+    ports: ['54312:5432']
+    volumes: ['./test/fixtures/pg-init.sql:/docker-entrypoint-initdb.d/init.sql:ro']
+  pg16:
+    image: postgres:16
+    command: postgres -c shared_preload_libraries=pg_stat_statements
+    environment: { POSTGRES_PASSWORD: test }
+    ports: ['54316:5432']
+    volumes: ['./test/fixtures/pg-init.sql:/docker-entrypoint-initdb.d/init.sql:ro']
