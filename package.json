@@ -1,0 +1,30 @@
+{
+  "name": "db-checkup",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "db-checkup": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=20.12"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:it": "DB_CHECKUP_IT=1 node --import tsx --test --test-concurrency=1 test/integration/*.test.ts"
+  },
+  "dependencies": {
+    "mysql2": "^3.24.6",
+    "node-sql-parser": "^5.4.0",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
