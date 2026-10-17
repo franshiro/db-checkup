@@ -100,8 +100,11 @@ export async function main(argv: string[], env: Record<string, string | undefine
       return fail(`Error: ${(err as Error).message}`, 1);
     }
   };
+  // Peringatan izin file dicetak sekali per perintah, sebelum menyentuh file.
+  const load = async () => { const r = await loadConnections(sp); for (const w of r.warnings) stderr.write(w + '\n'); return r; };
   const addDeps = { term, storePath: sp, createAdapter: deps.createAdapter, out: stdout };
   if (cmd === 'add') return wrap(async () => {
+    await load();
     if (values.env !== undefined) {
       const saved = await addFromEnv(addDeps, values.env);
       return saved.length || term ? 0 : 1;
@@ -110,7 +113,7 @@ export async function main(argv: string[], env: Record<string, string | undefine
     return await addManual(addDeps) ? 0 : 1;
   });
   if (cmd === 'list') return wrap(async () => {
-    const { connections: list } = await loadConnections(sp);
+    const { connections: list } = await load();
     if (!list.length) { stdout.write(`Belum ada koneksi. Tambah dengan \`dbc add\`  (file: ${sp})\n`); return 0; }
     const w = Math.max(4, ...list.map(c => c.name.length));
     stdout.write(`${'NAMA'.padEnd(w)}  ${'SERVER'.padEnd(18)}  ${'DATABASE'.padEnd(16)}  KONEKSI\n`);
@@ -118,7 +121,7 @@ export async function main(argv: string[], env: Record<string, string | undefine
     return 0;
   });
   if (cmd === 'remove') return wrap(async () => {
-    const { connections: list } = await loadConnections(sp);
+    const { connections: list } = await load();
     let name = positionals[1];
     if (!name) {
       if (!term) return fail('Error: sebutkan nama koneksi yang dihapus: dbc remove <nama> --yes', 2);
@@ -143,7 +146,7 @@ export async function main(argv: string[], env: Record<string, string | undefine
 
   if (cmd && !cmd.includes('://')) {
     let saved;
-    try { saved = (await loadConnections(sp)).connections.find(c => c.name === cmd); } catch (err) { return fail(`Error: ${(err as Error).message}`, 1); }
+    try { saved = (await load()).connections.find(c => c.name === cmd); } catch (err) { return fail(`Error: ${(err as Error).message}`, 1); }
     if (!saved) return fail(`Error: koneksi "${cmd}" tidak ditemukan. Lihat daftar dengan: dbc list`, 2);
     url = connectionUrl(saved);
   } else url = cmd ?? env.DATABASE_URL;

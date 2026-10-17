@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile, mkdir, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -132,4 +132,15 @@ test('main add --env imports from a folder', async () => {
   const io = capture();
   assert.equal(await main(['add', '--env', dir], {}, io, { createAdapter: async () => fakeAdapter(), storePath: sp }), 0);
   assert.equal((await loadConnections(sp)).connections.length, 3);
+});
+
+test('loose store permissions warn once on stderr for list and <name>', async () => {
+  await store();
+  await chmod(sp, 0o644);
+  const d = { createAdapter: async () => fakeAdapter(), storePath: sp };
+  for (const argv of [['list'], ['prod']]) {
+    const io = capture();
+    await main(argv, {}, io, d);
+    assert.equal(io.err().split('chmod 600').length - 1, 1, io.err());
+  }
 });
