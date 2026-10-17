@@ -90,3 +90,9 @@ test('config partial and no-RAM message', () => {
   const md = renderMarkdown(buildReport(sampleResult({ config }), { mask: true }));
   assert.ok(md.includes('sebagian (butuh role pg_read_all_stats)') && md.includes('--ram'), md);
 });
+test('config too-small reason is rendered', () => {
+  const v = analyzeConfig(pgFacts() as any, { totalMb: 1024, source: 'flag', dedicated: true }, new Date(2026, 9, 17));
+  const config = { ok: true as const, value: { ...v, memory: { ...v.memory, tooSmall: true, tooSmallReason: 'RAM terlalu kecil untuk jumlah koneksi yang sedang dipakai' } } };
+  const md = renderMarkdown(buildReport(sampleResult({ config }), { mask: true }));
+  assert.ok(md.includes('RAM terlalu kecil untuk jumlah koneksi yang sedang dipakai (jatah 1GB).'), md);
+});

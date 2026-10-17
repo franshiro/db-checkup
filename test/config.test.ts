@@ -196,3 +196,51 @@ test('full connections: raise advice only when memory allows going above current
   const roomy = analyzeConfig(my('mysql', '8.0.39', {}, { connections: conns(100, { used: 95 }) }), mem(8192), today);
   assert.ok(roomy.connections.advice.some(a => /dinaikkan sampai \d/.test(a)));
 });
+
+// R9: worst case with current values fits -> never touch max_connections, shrink listed increases instead.
+const busy = (max: number, used: number, settings: Record<string, Setting> = {}) =>
+  pg(max, settings, { connections: conns(max, { reserved: 3, used }) });
+test('R9a: current fits, recommended set does not -> no max_connections cut, shrunk increases', () => {
+  const r = analyzeConfig(busy(400, 350), mem(4096, false), today);   // stock PG16, J = 2048, worst now 1920
+  assert.equal(r.memory.overflow, false);
+  assert.equal(rec(r, 'max_connections'), undefined);
+  assert.ok(!r.connections.advice.some(a => a.includes('memori tidak cukup')), r.connections.advice.join('|'));
+  assert.ok(r.memory.worstAfterMb! <= 2048);
+  assert.equal(rec(r, 'shared_buffers'), undefined);   // 512MB shrinks to 256MB, within 50-150% of 128MB
+  const s = analyzeConfig(busy(400, 350, { shared_buffers: size(64, true) }), mem(4096, false), today);
+  assert.equal(rec(s, 'shared_buffers')?.suggested, '256MB');
+  assert.match(rec(s, 'shared_buffers')!.reason, /^Diturunkan/);
+  assert.equal(rec(s, 'max_connections'), undefined);
+  assert.equal(s.memory.worstAfterMb, 2048);
+});
+
+test('R9b: overflow and fitting needs fewer connections than in use -> no cut, too-small message', () => {
+  const r = analyzeConfig(busy(500, 141), mem(1024), today);   // fit needs 140, in use rounds up to 150
+  assert.equal(r.memory.overflow, true);
+  assert.equal(r.memory.tooSmall, true);
+  assert.equal(r.memory.tooSmallReason, 'RAM terlalu kecil untuk jumlah koneksi yang sedang dipakai');
+  assert.ok(!r.recs.some(x => MEM_PG.includes(x.setting)));
+  assert.ok(r.connections.advice.some(a => a.includes('PgBouncer')));
+  const m = analyzeConfig(my('mysql', '8.0.39', {}, { connections: conns(100, { used: 10, peak: 70 }) }), mem(512), today);   // fit needs 60
+  assert.equal(m.memory.tooSmallReason, 'RAM terlalu kecil untuk jumlah koneksi yang sedang dipakai');
+  assert.equal(rec(m, 'max_connections'), undefined);
+  assert.ok(m.connections.advice.some(a => a.includes('ProxySQL')) && m.connections.advice.some(a => a.includes('wait_timeout')));
+});
+
+test('R9b: overflow with low usage -> cut not below max(used, peak) rounded up to 10', () => {
+  const r = analyzeConfig(busy(500, 135), mem(1024), today);
+  assert.equal(rec(r, 'max_connections')?.suggested, '140');
+  assert.ok(r.memory.worstAfterMb! <= 1024);
+  const m = analyzeConfig(my('mysql', '8.0.39', {}, { connections: conns(100, { used: 10, peak: 55 }) }), mem(512), today);
+  assert.equal(rec(m, 'max_connections')?.suggested, '60');
+  assert.equal(m.memory.tooSmall, undefined);
+});
+
+test('no raise advice while current settings overflow', () => {
+  // work_mem 64MB overflows 4GB now; the suggested set would leave room for more connections
+  const r = analyzeConfig(busy(100, 90, { work_mem: size(64) }), mem(4096), today);
+  assert.equal(r.memory.overflow, true);
+  assert.equal(r.connections.warn, true);
+  assert.ok(!r.connections.advice.some(a => a.includes('dinaikkan')), r.connections.advice.join('|'));
+  assert.ok(r.connections.advice.some(a => a.includes('memori tidak cukup')));
+});

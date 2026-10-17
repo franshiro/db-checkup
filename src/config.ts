@@ -11,7 +11,7 @@ export interface Rec { setting: string; current: string; suggested: string; reas
 export interface ConfigResult {
   connections: ServerFacts['connections'] & { effective: number; usagePct: number; warn: boolean; advice: string[] };
   memory: { quotaMb?: number; totalMb?: number; availableMb?: number; source: ServerMemory['source']; dedicated: boolean;
-            worstMb: number; worstAfterMb?: number; overflow: boolean; tooSmall?: boolean; skipped?: string };
+            worstMb: number; worstAfterMb?: number; overflow: boolean; tooSmall?: boolean; tooSmallReason?: string; skipped?: string };
   recs: Rec[];
   readiness: { item: string; ok: boolean; fix?: string; restart?: boolean }[];
   version: { major: string; eol?: string; status: 'eol' | 'segera' | 'ok' | 'unknown' };
@@ -103,17 +103,33 @@ export function analyzeConfig(f: ServerFacts, m: ServerMemory, today: Date): Con
       const fit = isPg ? Math.max(4, Math.floor(room / Math.max(n, 1))) : floor128(room);
       if (fit < R[knob]) { R[knob] = fit; changed.add(knob); }
     }
-    if (worst(R) > J) {   // step 3: knob is at its floor, cut connections
-      const nc = maxConn(R, J);
+    if (worst(R) > J && memory.overflow) {   // step 3: knob is at its floor and current settings overflow, cut connections
+      const nc = maxConn(R, J), inUse = Math.ceil(Math.max(c.used, c.peak ?? 0) / 10) * 10;
       if (nc < 20) memory.tooSmall = true;
-      else { R.max_connections = nc; changed.add('max_connections'); advice.add(pooler); }
+      else if (nc < inUse) {   // a cut would reject live connections
+        memory.tooSmall = true; memory.tooSmallReason = 'RAM terlalu kecil untuk jumlah koneksi yang sedang dipakai';
+        advice.add(pooler);
+        if (!isPg) advice.add('Turunkan wait_timeout (mis. 600 detik) supaya koneksi Sleep yang menganggur cepat ditutup.');
+      } else { R.max_connections = nc; changed.add('max_connections'); advice.add(pooler); }
     }
     if (!memory.tooSmall) {
       const off = (k: string) => cur[k] < R[k] * 0.5 || cur[k] > R[k] * 1.5;
       const apply = (ks: string[]): Vals => ({ ...cur, ...Object.fromEntries(ks.map(k => [k, R[k]])) });
-      let shown = Object.keys(R).filter(k => (k !== 'max_connections' && off(k)) || (changed.has(k) && memory.overflow));
-      // Applying only some values can still overflow (e.g. raising a tiny work_mem); R itself fits by construction.
-      if (worst(apply(shown)) > J) shown = Object.keys(R).filter(k => R[k] !== cur[k]);
+      let shown = Object.keys(R).filter(k => (k !== 'max_connections' && off(k)) || (changed.has(k) && memory.overflow && R[k] !== cur[k]));
+      // Applying only some values can still overflow (e.g. raising a tiny work_mem).
+      if (worst(apply(shown)) > J && memory.overflow) shown = Object.keys(R).filter(k => R[k] !== cur[k]);   // R fits by construction
+      else if (worst(apply(shown)) > J) {
+        // Current fits: keep max_connections, pull listed increases back toward current (never below it) until it fits.
+        // Ends at current values at worst, which fit, so this always terminates within J.
+        for (const k of isPg ? ['work_mem', 'shared_buffers', 'maintenance_work_mem'] : ['innodb_buffer_pool_size']) {
+          const A = apply(shown), excess = worst(A) - J;
+          const per = worst({ ...A, [k]: 1 }) - worst({ ...A, [k]: 0 });   // worst-case MB per MB of k
+          if (excess <= 0 || !shown.includes(k) || A[k] <= cur[k] || per <= 0) continue;
+          const v = Math.floor((A[k] - excess / per) / (isPg ? 1 : 128)) * (isPg ? 1 : 128);
+          R[k] = v > cur[k] && v >= (k === 'work_mem' ? 4 : 0) ? v : cur[k]; changed.add(k);
+          if (!off(k)) shown = shown.filter(x => x !== k);
+        }
+      }
       final = apply(shown);
       memory.worstAfterMb = Math.floor(worst(final));
       for (const k of shown) {
@@ -129,10 +145,11 @@ export function analyzeConfig(f: ServerFacts, m: ServerMemory, today: Date): Con
   const warn = Math.max(c.used, c.peak ?? 0) >= effective * 0.8;
   if (warn) {
     advice.add(pooler);
-    const safe = J !== undefined && final ? maxConn(final, J) : NaN;
+    const safe = J !== undefined && final && !memory.overflow ? maxConn(final, J) : NaN;
     advice.add(J === undefined ? 'Jangan menaikkan max_connections sebelum memori dihitung (pakai --ram).'
       : Number.isFinite(safe) && safe > n ? `max_connections bisa dinaikkan sampai ${fmt.format(safe)} tanpa melebihi jatah RAM (dengan setting yang disarankan).`
-      : 'Jangan menaikkan max_connections: memori tidak cukup.');
+      : memory.overflow ? 'Jangan menaikkan max_connections: memori tidak cukup.'
+      : 'Jangan menaikkan max_connections: tidak ada sisa jatah RAM untuk koneksi tambahan.');
   }
   if (c.rejected) advice.add(`${fmt.format(c.rejected)} kali koneksi ditolak karena max_connections penuh (sejak server restart).`);
   const idle = (state: string) => c.groups.filter(g => g.state === state).reduce((a, g) => a + g.idleLong, 0);
