@@ -81,3 +81,21 @@ test('abort between EXPLAINs stops before the next one', async () => {
     { connection: 'c', top: 10, parts: ['suggestions'], signal: ac.signal }), (e: Error) => e.name === 'AbortError');
   assert.equal(calls, 1);
 });
+
+import { pgFacts } from './helpers.js';
+test('parts [config] calls only info and serverConfig', async () => {
+  const called: string[] = [];
+  const a = fakeAdapter({
+    info: async () => { called.push('info'); return { dialect: 'postgres', flavor: 'postgres', version: '16', database: 'db', statsSince: null, warnings: [] }; },
+    serverConfig: async () => { called.push('serverConfig'); return pgFacts(); },
+    statements: async () => { called.push('statements'); return []; },
+  });
+  const r = await analyze(a, { connection: 'c', top: 10, parts: ['config'], server: { totalMb: 8192, source: 'flag', dedicated: true } });
+  assert.deepEqual(called, ['info', 'serverConfig']);
+  assert.equal(r.config?.ok, true);
+});
+test('full analysis includes config; SkipError isolated', async () => {
+  const r = await analyze(fakeAdapter(), { connection: 'c', top: 10 });
+  assert.deepEqual(r.config, { ok: false, reason: 'serverConfig tidak tersedia' });
+  assert.equal(r.tableScans?.ok, true);
+});

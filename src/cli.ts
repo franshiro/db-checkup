@@ -18,6 +18,9 @@ import { connectionUrl, loadConnections, removeConnection, storePath } from './s
 import { confirm, select } from './tui.js';
 import type { Term } from './tui.js';
 import { runMenu } from './menu.js';
+import { parseSize } from './config.js';
+import type { ServerMemory } from './config.js';
+import { hostOf, isLocalHost, localMemory } from './sysmem.js';
 
 type Out = { write(s: string): void; isTTY?: boolean };
 
@@ -43,6 +46,9 @@ Opsi:
   --top <n>           jumlah query teratas (default ${DEFAULT_TOP})
   --watch <detik>     ambil dua snapshot dengan jeda sekian detik
   --output <file>     simpan laporan sebagai file Markdown
+  --ram <ukuran>      RAM server, mis. 8G atau 512M (untuk bagian konfigurasi server)
+  --shared            server berbagi dengan aplikasi lain (jatah RAM 50%)
+  --dedicated         server khusus database (default; jatah RAM 100%)
   --no-mask           jangan samarkan literal di dalam query
   --version           tampilkan versi
   --help              tampilkan bantuan ini
@@ -70,7 +76,7 @@ export function redact(msg: string, url: string | undefined): string {
 }
 
 export async function main(argv: string[], env: Record<string, string | undefined>,
-  io: { stdout: Out; stderr: Out; stdin?: Term['input'] }, deps: { createAdapter(c: ConnectionConfig): Promise<DbAdapter>; storePath?: string } = { createAdapter: defaultCreateAdapter }): Promise<number> {
+  io: { stdout: Out; stderr: Out; stdin?: Term['input'] }, deps: { createAdapter(c: ConnectionConfig): Promise<DbAdapter>; storePath?: string; memory?: typeof localMemory } = { createAdapter: defaultCreateAdapter }): Promise<number> {
   const { stdout, stderr } = io;
   let url: string | undefined;
   // Semua pesan ke stderr melewati sini: password (asli dan hasil decode) diganti ***.
@@ -87,6 +93,7 @@ export async function main(argv: string[], env: Record<string, string | undefine
     parsed = parseArgs({ args: argv, allowPositionals: true, options: {
       output: { type: 'string' }, top: { type: 'string' }, watch: { type: 'string' },
       'no-mask': { type: 'boolean' }, help: { type: 'boolean' }, version: { type: 'boolean' }, env: { type: 'string' }, yes: { type: 'boolean' },
+      ram: { type: 'string' }, shared: { type: 'boolean' }, dedicated: { type: 'boolean' },
     } });
   } catch (err) { return fail(`Error: ${(err as Error).message}\n\n${USAGE}`, 2); }
   const { values, positionals } = parsed;
@@ -151,8 +158,12 @@ export async function main(argv: string[], env: Record<string, string | undefine
   if (Number.isNaN(top)) return fail('Error: --top harus bilangan bulat positif.', 2);
   if (Number.isNaN(watchSeconds)) return fail('Error: --watch harus bilangan bulat positif (detik).', 2);
 
+  const ramFlag = values.ram === undefined ? undefined : parseSize(values.ram);
+  if (ramFlag === null) return fail('Error: --ram tidak valid; contoh: --ram 8G atau --ram 512M.', 2);
+  if (values.shared && values.dedicated) return fail('Error: --shared dan --dedicated tidak bisa dipakai bersamaan.', 2);
+
+  let saved;
   if (cmd && !cmd.includes('://')) {
-    let saved;
     try { saved = (await load()).connections.find(c => c.name === cmd); } catch (err) { return fail(`Error: ${(err as Error).message}`, 1); }
     if (!saved) return fail(`Error: koneksi "${cmd}" tidak ditemukan. Lihat daftar dengan: dbc list`, 2);
     url = connectionUrl(saved);
@@ -167,8 +178,15 @@ export async function main(argv: string[], env: Record<string, string | undefine
     return fail(`Gagal konek ke database: ${(err as Error).message}`, 1);
   }
   try {
+    const dedicated = values.shared ? false : values.dedicated ? true : saved?.dedicated ?? true;
+    let server: ServerMemory = { source: null, dedicated };
+    if (ramFlag) server = { totalMb: ramFlag, source: 'flag', dedicated };
+    else if (saved?.ram_mb) server = { totalMb: saved.ram_mb, source: 'manual', dedicated };
+    else if (isLocalHost(hostOf(config))) {
+      try { server = { ...await (deps.memory ?? localMemory)(), source: 'lokal', dedicated }; } catch { /* RAM tidak terbaca: dianggap tidak diketahui */ }
+    }
     const result = await analyze(adapter, {
-      connection: redactUrl(url), top: top!, watchSeconds,
+      connection: redactUrl(url), top: top!, watchSeconds, server,
       onTick: n => { if (stderr.isTTY) stderr.write(`\r\x1b[KMenunggu snapshot kedua: ${n} detik…`); },
     });
     if (watchSeconds && stderr.isTTY) stderr.write('\r\x1b[K');

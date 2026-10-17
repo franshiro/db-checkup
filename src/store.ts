@@ -2,7 +2,7 @@ import { readFile, writeFile, rename, chmod, mkdir, stat, rm, realpath } from 'n
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-export interface SavedConnection { name: string; type: 'postgres' | 'mysql'; host: string; port: number; user: string; password: string; database: string; version?: string; ssl?: string }
+export interface SavedConnection { name: string; type: 'postgres' | 'mysql'; host: string; port: number; user: string; password: string; database: string; version?: string; ssl?: string; dedicated?: boolean; ram_mb?: number }
 
 export class StoreError extends Error {}
 
@@ -46,7 +46,9 @@ export async function loadConnections(path: string): Promise<{ connections: Save
     const password = e.password ?? '';
     if (typeof password !== 'string') continue;
     if ((e.ssl !== undefined && typeof e.ssl !== 'string') || (e.version !== undefined && typeof e.version !== 'string')) continue;
-    connections.push({ ...e, port, password } as SavedConnection);
+    const { dedicated, ram_mb, ...rest } = e;   // invalid values stay in the file, only hidden from the result
+    connections.push({ ...rest, port, password, ...(typeof dedicated === 'boolean' ? { dedicated } : {}),
+      ...(Number.isInteger(ram_mb) && ram_mb > 0 ? { ram_mb } : {}) } as SavedConnection);
   }
   const warnings: string[] = [];
   try {
@@ -72,7 +74,12 @@ async function writeAll(link: string, list: unknown[]): Promise<void> {
 export async function saveConnection(path: string, c: SavedConnection): Promise<void> {
   const raw = await readRaw(path);
   const i = raw.findIndex(e => isObj(e) && e.name === c.name);
-  if (i >= 0) { const bulk = (raw[i] as any).bulk; raw[i] = bulk === undefined ? c : { ...c, bulk }; } else raw.push(c);
+  if (i >= 0) {
+    const old = raw[i] as any, same = old.host === c.host && Number(old.port) === c.port;
+    const keep: Record<string, unknown> = { bulk: old.bulk, ...(same ? { dedicated: old.dedicated, ram_mb: old.ram_mb } : {}) };
+    for (const k of Object.keys(keep)) if (keep[k] === undefined) delete keep[k];
+    raw[i] = { ...c, ...keep };
+  } else raw.push(c);
   await writeAll(path, raw);
 }
 

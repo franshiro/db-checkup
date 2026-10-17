@@ -73,3 +73,34 @@ test('redact: raw and percent-encoded password', () => {
   assert.equal(redact('x 100% y', 'postgres://a:100%@h/d'), 'x *** y');
   assert.equal(redact('x', undefined), 'x');
 });
+
+import { writeFile } from 'node:fs/promises';
+import { pgFacts } from './helpers.js';
+const cfgDeps = (memory?: () => Promise<{ totalMb: number }>) => ({ createAdapter: async () => fakeAdapter({ serverConfig: async () => pgFacts() as any }), ...(memory ? { memory } : {}) });
+const url = 'postgres://a@db.remote/x';
+test('--ram 8G --shared -> quota 4GB', async () => {
+  const io = capture();
+  assert.equal(await main([url, '--ram', '8G', '--shared'], {}, io, cfgDeps()), 0);
+  assert.match(io.out(), /4GB/);
+});
+test('invalid --ram and --shared with --dedicated -> 2', async () => {
+  assert.equal(await main([url, '--ram', 'abc'], {}, capture(), cfgDeps()), 2);
+  assert.equal(await main([url, '--shared', '--dedicated'], {}, capture(), cfgDeps()), 2);
+});
+test('remote host without --ram -> skipped message', async () => {
+  const io = capture();
+  assert.equal(await main([url], {}, io, cfgDeps(async () => { throw new Error('must not read'); })), 0);
+  assert.match(io.out(), /--ram/);
+});
+test('local host reads memory via deps.memory', async () => {
+  const io = capture();
+  assert.equal(await main(['postgres://a@localhost/x'], {}, io, cfgDeps(async () => ({ totalMb: 2048 }))), 0);
+  assert.match(io.out(), /2GB/);
+});
+test('saved connection uses ram_mb and dedicated:false', async () => {
+  const sp = join(dir, 'saved.json');
+  await writeFile(sp, JSON.stringify([{ name: 'prod', type: 'postgres', host: 'db.remote', port: 5432, user: 'u', password: 'p', database: 'd', ram_mb: 4096, dedicated: false }]));
+  const io = capture();
+  assert.equal(await main(['prod'], {}, io, { ...cfgDeps(), storePath: sp }), 0);
+  assert.match(io.out(), /2GB/);
+});

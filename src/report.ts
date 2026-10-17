@@ -1,6 +1,8 @@
 import { maskSql } from './mask.js';
 import { LONG_RUNNING_SECONDS, QUERY_PREVIEW_CHARS } from './types.js';
 import type { AnalysisResult, Outcome, StatementStat } from './types.js';
+import { formatSize } from './config.js';
+import type { ConfigResult } from './config.js';
 
 export type Block = { kind: 'table'; headers: string[]; rows: string[][] } | { kind: 'code'; text: string } | { kind: 'text'; text: string; level?: 'info' | 'warn' };
 export interface Section { title: string; blocks: Block[] }
@@ -11,6 +13,34 @@ const nf1 = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
 export const formatCount = (n: number) => nf.format(n);
 export const formatMs = (ms: number) =>
   ms < 1000 ? `${nf.format(Math.round(ms))} ms` : ms < 60000 ? `${nf1.format(ms / 1000)} s` : `${nf1.format(ms / 60000)} min`;
+
+function configBlocks(c: ConfigResult): Block[] {
+  const k = c.connections, m = c.memory, b: Block[] = [];
+  const text = (t: string, level?: 'warn'): Block => ({ kind: 'text', text: t, ...(level ? { level } : {}) });
+  const ccols = ['Batas efektif', 'Terpakai', '%', ...(k.peak !== undefined ? ['Puncak'] : []), ...(k.rejected !== undefined ? ['Ditolak'] : [])];
+  b.push({ kind: 'table', headers: ccols, rows: [[formatCount(k.effective), formatCount(k.used), `${formatCount(k.usagePct)}%`,
+    ...(k.peak !== undefined ? [formatCount(k.peak)] : []), ...(k.rejected !== undefined ? [formatCount(k.rejected)] : [])]] });
+  if (k.warn) b.push(text('Pemakaian koneksi mendekati batas (≥ 80%).', 'warn'));
+  for (const a of k.advice) b.push(text(a, 'warn'));
+  if (k.groups.length) b.push({ kind: 'table', headers: ['Database', 'User', 'Aplikasi', 'Status', 'Jumlah', 'Idle lama'],
+    rows: k.groups.map(g => [g.database ?? '-', g.user, g.app || '-', g.state, formatCount(g.count), formatCount(g.idleLong)]) });
+  if (k.partial) b.push(text('Data koneksi sebagian: hak akses terbatas, hanya sesi milik user ini yang terlihat.', 'warn'));
+  const ram = m.totalMb === undefined ? 'tidak diketahui' : `${formatSize(m.totalMb)} (${m.source ?? '-'})`;
+  b.push(text(`Total RAM: ${ram}${m.availableMb !== undefined ? `, tersedia ${formatSize(m.availableMb)}` : ''}. Jenis: ${m.dedicated ? 'khusus database' : 'berbagi'}.`));
+  if (m.quotaMb !== undefined) b.push(text(`Jatah RAM: ${formatSize(m.quotaMb)}. Perkiraan terburuk sekarang: ${formatSize(m.worstMb)}.`));
+  if (m.overflow) b.push(text('Dalam kondisi terburuk, setting memori bisa melebihi RAM.', 'warn'));
+  if (m.tooSmall) b.push(text(`RAM terlalu kecil untuk setting minimal (jatah ${formatSize(m.quotaMb ?? 0)}).`, 'warn'));
+  if (m.skipped) b.push(text(m.skipped));
+  if (c.recs.length) b.push({ kind: 'table', headers: ['Setting', 'Sekarang', 'Disarankan', 'Alasan', 'Restart'],
+    rows: c.recs.map(r => [r.setting, r.current, r.suggested, r.reason, r.restart ? 'ya' : 'tidak']) });
+  if (m.worstAfterMb !== undefined) b.push(text(`Perkiraan terburuk setelah rekomendasi: ${formatSize(m.worstAfterMb)}.`));
+  if (c.readiness.length) b.push({ kind: 'table', headers: ['Kesiapan', 'Status', 'Perbaikan'],
+    rows: c.readiness.map(r => [r.item, r.ok ? 'siap' : 'belum', r.ok ? '-' : `${r.fix ?? '-'}${r.restart ? ' (butuh restart)' : ''}`]) });
+  b.push(text(`Versi: ${c.version.major} — ${{ eol: `sudah EOL${c.version.eol ? ` (${c.version.eol})` : ''}`, segera: `segera EOL (${c.version.eol})`, ok: `didukung sampai ${c.version.eol}`, unknown: 'status dukungan tidak diketahui' }[c.version.status]}.`,
+    c.version.status === 'eol' || c.version.status === 'segera' ? 'warn' : undefined));
+  for (const p of c.commands) b.push(text(p.platform), { kind: 'code', text: p.lines.join('\n') });
+  return b;
+}
 
 export function buildReport(r: AnalysisResult, opts: { mask: boolean }): Report {
   const preview = (q: string) => {
@@ -59,6 +89,8 @@ export function buildReport(r: AnalysisResult, opts: { mask: boolean }): Report 
     q => [String(q.pid), q.user, formatCount(Math.round(q.seconds)), q.state, preview(q.query)]));
   sections.push(list('Query yang saling mengunci', r.locks, ['PID menunggu', 'Query menunggu', 'PID pengunci', 'Query pengunci', 'Detik'],
     l => [String(l.waitingPid), preview(l.waitingQuery), String(l.blockingPid), l.blockingQuery === null ? '-' : preview(l.blockingQuery), formatCount(Math.round(l.seconds))]));
+
+  sections.push(section('Konfigurasi server', r.config, configBlocks));
 
   const i = r.info;
   const summary: Block[] = [

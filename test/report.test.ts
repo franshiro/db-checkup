@@ -74,3 +74,19 @@ test('buildReport skips parts that were not run', () => {
   const rep = buildReport({ connection, info, running: ok, locks: ok }, { mask: true });
   assert.deepEqual(rep.sections.map(s => s.title), ['Ringkasan', 'Query yang sedang jalan lama (> 5 detik)', 'Query yang saling mengunci']);
 });
+
+import { analyzeConfig } from '../src/config.js';
+import { pgFacts } from './helpers.js';
+test('config section is last, with table and sql block', () => {
+  const config = { ok: true as const, value: analyzeConfig(pgFacts() as any, { totalMb: 16384, source: 'flag', dedicated: true }, new Date(2026, 9, 17)) };
+  const rep = buildReport(sampleResult({ config }), { mask: true });
+  assert.equal(titles(rep).at(-1), 'Konfigurasi server');
+  const md = renderMarkdown(rep);
+  assert.ok(md.includes('| shared_buffers |') && md.includes('```sql') && md.includes('ALTER SYSTEM'), md);
+  assert.ok(!md.includes('sebagian'));
+});
+test('config partial and no-RAM message', () => {
+  const config = { ok: true as const, value: analyzeConfig(pgFacts({}, true) as any, { source: null, dedicated: true }, new Date(2026, 9, 17)) };
+  const md = renderMarkdown(buildReport(sampleResult({ config }), { mask: true }));
+  assert.ok(md.includes('sebagian') && md.includes('--ram'), md);
+});

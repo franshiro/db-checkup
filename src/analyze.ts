@@ -5,10 +5,12 @@ import { diffStatements, isOwnOrSystemQuery, topByTotal } from './stats.js';
 import { maskSql } from './mask.js';
 import { SqlParseError } from './sql-usage.js';
 import { suggestIndexes } from './suggest.js';
+import { analyzeConfig } from './config.js';
+import type { ServerMemory } from './config.js';
 
 export async function analyze(adapter: DbAdapter, opts: { connection: string; top: number; watchSeconds?: number;
   sleep?: (ms: number) => Promise<void>; onTick?: (secondsLeft: number) => void;
-  parts?: AnalysisPart[]; signal?: AbortSignal }): Promise<AnalysisResult> {
+  parts?: AnalysisPart[]; signal?: AbortSignal; server?: ServerMemory; today?: Date }): Promise<AnalysisResult> {
   const { top, watchSeconds, sleep = (ms: number) => delay(ms, undefined, { signal: opts.signal }), onTick, signal } = opts;
   const want = opts.parts && new Set(opts.parts);
   const { dialect } = adapter;
@@ -70,5 +72,6 @@ export async function analyze(adapter: DbAdapter, opts: { connection: string; to
     unusedIndexes: await part('unusedIndexes', () => adapter.unusedIndexes(top)),
     running: await part('running', () => adapter.longRunning(LONG_RUNNING_SECONDS)),
     locks: await part('locks', () => adapter.lockWaits()),
+    config: await part('config', async () => analyzeConfig(await adapter.serverConfig(), opts.server ?? { source: null, dedicated: true }, opts.today ?? new Date())),
   };
 }

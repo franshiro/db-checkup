@@ -1,4 +1,4 @@
-import type { ServerFacts } from './config.js';
+import type { ConfigResult, ServerFacts } from './config.js';
 export type Dialect = 'postgres' | 'mysql';
 export const MIN_TABLE_ROWS = 10000, LONG_RUNNING_SECONDS = 5, DEFAULT_TOP = 10, QUERY_PREVIEW_CHARS = 200;
 export interface ServerInfo { dialect: Dialect; flavor: 'postgres' | 'mysql' | 'mariadb'; version: string; database: string; statsSince: Date | null; warnings: string[] }
@@ -32,11 +32,11 @@ export interface DbAdapter {
   describeError(err: unknown): string | null;   // privilege hint for access-denied errors
   close(): Promise<void>;
 }
-export type AnalysisPart = 'statements' | 'suggestions' | 'tableScans' | 'foreignKeys' | 'unusedIndexes' | 'running' | 'locks';
+export type AnalysisPart = 'statements' | 'suggestions' | 'tableScans' | 'foreignKeys' | 'unusedIndexes' | 'running' | 'locks' | 'config';
 export interface AnalysisResult {
   connection: string; info: ServerInfo; watchSeconds?: number;
   current?: Outcome<StatementStat[]>; cumulative?: Outcome<StatementStat[]>;
   suggestions?: Outcome<SuggestionResult>;
   tableScans?: Outcome<TableScanStat[]>; foreignKeys?: Outcome<ForeignKeyIssue[]>; unusedIndexes?: Outcome<IndexInfo[]>;
-  running?: Outcome<RunningQuery[]>; locks?: Outcome<LockWait[]>;
+  running?: Outcome<RunningQuery[]>; locks?: Outcome<LockWait[]>; config?: Outcome<ConfigResult>;
 }

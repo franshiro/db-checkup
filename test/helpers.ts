@@ -14,3 +14,19 @@ export function fakeAdapter(overrides: Partial<DbAdapter> = {}): DbAdapter {
     ...overrides,
   };
 }
+
+const MBYTES = 1048576;
+export const pgFacts = (extra: Record<string, unknown> = {}, partial = false) => ({
+  flavor: 'postgres' as const, version: '16.4',
+  connections: { max: 100, reserved: 0, used: 5, partial, groups: [{ database: 'db', user: 'u', app: 'a', state: 'idle', count: 5, idleLong: 0 }] },
+  pgStatStatements: { preloaded: true, created: true },
+  settings: {
+    shared_buffers: { value: String(128 * MBYTES), bytes: 128 * MBYTES, restart: true },
+    effective_cache_size: { value: String(4096 * MBYTES), bytes: 4096 * MBYTES, restart: false },
+    work_mem: { value: String(4 * MBYTES), bytes: 4 * MBYTES, restart: false },
+    maintenance_work_mem: { value: String(64 * MBYTES), bytes: 64 * MBYTES, restart: false },
+    autovacuum_work_mem: { value: '-1', restart: false }, autovacuum_max_workers: { value: '3', restart: true },
+    max_connections: { value: '100', restart: true },
+  },
+  ...extra,
+});

@@ -144,3 +144,25 @@ test('saving through a symlink updates the target and keeps the link', async () 
   assert.ok((await lstat(link)).isSymbolicLink());
   assert.deepEqual(JSON.parse(await readFile(real, 'utf8')).map((e: any) => e.name), ['a', 'b']);
 });
+
+test('invalid dedicated/ram_mb are dropped from result but kept in file', async () => {
+  const p = join(dir, 'dram', 'databases.json');
+  await saveConnection(p, conn('seed'));
+  const e = { ...base, name: 'e', dedicated: 'ya', ram_mb: -1 };
+  await writeFile(p, JSON.stringify([e]));
+  const c = (await loadConnections(p)).connections;
+  assert.equal(c.length, 1); assert.ok(!('dedicated' in c[0]) && !('ram_mb' in c[0]));
+  await saveConnection(p, conn('other'));
+  assert.deepEqual(JSON.parse(await readFile(p, 'utf8'))[0], e);
+});
+test('overwrite keeps dedicated/ram_mb unless host or port changed; bulk always', async () => {
+  const p = join(dir, 'keep', 'databases.json');
+  await saveConnection(p, conn('seed'));
+  await writeFile(p, JSON.stringify([{ ...base, name: 'a', bulk: true, dedicated: false, ram_mb: 4096 }]));
+  await saveConnection(p, conn('a', { password: 'new' }));
+  let a = JSON.parse(await readFile(p, 'utf8'))[0];
+  assert.deepEqual([a.bulk, a.dedicated, a.ram_mb, a.password], [true, false, 4096, 'new']);
+  await saveConnection(p, conn('a', { host: 'other' }));
+  a = JSON.parse(await readFile(p, 'utf8'))[0];
+  assert.deepEqual([a.bulk, a.dedicated, a.ram_mb], [true, undefined, undefined]);
+});
