@@ -2,6 +2,13 @@ import pg from 'pg';
 import { MIN_TABLE_ROWS, SkipError } from '../types.js';
 import type { DbAdapter, ForeignKeyIssue, IndexInfo, LockWait, RunningQuery, ServerInfo, StatementStat, TableInfo, TableScanStat } from '../types.js';
 import { pgScans } from '../plan.js';
+import type { ServerFacts, Setting } from '../config.js';
+
+const PG_SETTINGS = ['shared_buffers', 'effective_cache_size', 'work_mem', 'maintenance_work_mem', 'autovacuum_work_mem', 'autovacuum_max_workers',
+  'max_connections', 'superuser_reserved_connections', 'reserved_connections', 'shared_preload_libraries', 'track_io_timing',
+  'track_activity_query_size', 'log_min_duration_statement', 'idle_in_transaction_session_timeout'];
+const PG_MEMORY = new Set(['shared_buffers', 'effective_cache_size', 'work_mem', 'maintenance_work_mem', 'autovacuum_work_mem']);
+const PG_UNIT_BYTES: Record<string, number> = { '8kB': 8192, kB: 1024, MB: 1048576, B: 1 };
 
 const ENABLE_HINT = `pg_stat_statements belum aktif. Cara mengaktifkan:
 - Server sendiri: tambahkan shared_preload_libraries = 'pg_stat_statements' di postgresql.conf, restart, lalu jalankan CREATE EXTENSION pg_stat_statements;
@@ -128,6 +135,28 @@ export async function createPostgresAdapter(url: string, connectTimeoutMs = 1000
         FROM pg_stat_activity a CROSS JOIN LATERAL unnest(pg_blocking_pids(a.pid)) AS bp(pid)
         LEFT JOIN pg_stat_activity b ON b.pid = bp.pid WHERE a.datname = current_database() AND a.wait_event_type = 'Lock'`);
       return rows.map(r => ({ waitingPid: r.waiting_pid, waitingQuery: r.waiting_query, blockingPid: r.blocking_pid, blockingQuery: r.blocking_query, seconds: Number(r.seconds) }));
+    },
+
+    async serverConfig(): Promise<ServerFacts> {
+      const version = String((await q('SHOW server_version'))[0].server_version).match(/^\d+(\.\d+)*/)?.[0] ?? '';
+      const settings: Record<string, Setting> = {};
+      for (const r of await q('SELECT name, setting, unit, context FROM pg_settings WHERE name = ANY($1)', [PG_SETTINGS])) {
+        const mult = PG_UNIT_BYTES[r.unit], n = Number(r.setting);
+        settings[r.name] = { value: r.setting, restart: r.context === 'postmaster',
+          ...(PG_MEMORY.has(r.name) && mult && n >= 0 ? { bytes: n * mult } : {}) };
+      }
+      const groups = (await q(`SELECT datname, usename, application_name, state, count(*)::int AS n,
+          count(*) FILTER (WHERE (state = 'idle' AND now() - state_change > interval '10 minutes')
+                              OR (state = 'idle in transaction' AND now() - state_change > interval '1 minute'))::int AS idle_long
+        FROM pg_stat_activity WHERE backend_type = 'client backend'
+        GROUP BY datname, usename, application_name, state`)).map(r => ({
+        database: r.datname ?? undefined, user: r.usename ?? '', app: r.application_name ?? '', state: r.state ?? '', count: r.n, idleLong: r.idle_long }));
+      const [{ ok }] = await q(`SELECT (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) OR pg_has_role(current_user, 'pg_read_all_stats', 'MEMBER') AS ok`);
+      const num = (k: string) => Number(settings[k]?.value ?? 0);
+      return { flavor: 'postgres', version, settings,
+        connections: { max: num('max_connections'), reserved: num('superuser_reserved_connections') + num('reserved_connections'),
+          used: groups.reduce((a, g) => a + g.count, 0), partial: !ok, groups },
+        pgStatStatements: { preloaded: (settings.shared_preload_libraries?.value ?? '').split(',').some(x => x.trim() === 'pg_stat_statements'), created: await hasExtension() } };
     },
 
     describeError: err => (err as { code?: string } | null)?.code === '42501'

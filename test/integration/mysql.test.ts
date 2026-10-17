@@ -92,3 +92,20 @@ for (const { name, opts } of servers) {
     } finally { await adapter.close(); await client.end(); }
   });
 }
+
+for (const { name, opts } of servers) {
+  test(`mysql adapter serverConfig (${name})`, { skip }, async () => {
+    const adapter = await createMysqlAdapter(opts);
+    try {
+      const f = await adapter.serverConfig();
+      assert.equal(f.flavor, name === 'mariadb' ? 'mariadb' : 'mysql');
+      assert.match(f.version, /^\d+(\.\d+)*$/);
+      assert.ok(f.settings.innodb_buffer_pool_size.bytes! > 0);
+      assert.ok(f.connections.peak! >= 1);
+      assert.equal(f.connections.partial, false);
+      assert.ok(f.connections.groups.some(g => g.user === 'root'));
+      if (name === 'mariadb') assert.ok(f.settings.aria_pagecache_buffer_size);
+      else assert.equal(f.digestConsumer, true);
+    } finally { await adapter.close(); }
+  });
+}

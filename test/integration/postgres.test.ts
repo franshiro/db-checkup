@@ -74,3 +74,23 @@ for (const url of urls) {
     } finally { await adapter.close(); await client.query('DROP INDEX dbc_it_partial'); await client.end(); }
   });
 }
+
+for (const url of urls) {
+  test(`postgres adapter serverConfig (${url})`, { skip }, async () => {
+    const adapter = await createPostgresAdapter(url);
+    try {
+      const f = await adapter.serverConfig();
+      const pg16 = url.includes(':54316');
+      assert.equal(f.flavor, 'postgres');
+      assert.match(f.version, /^\d+(\.\d+)*$/);
+      assert.equal(f.settings.shared_buffers.bytes, 134217728);
+      assert.equal(f.settings.shared_buffers.restart, true);
+      assert.equal(f.settings.work_mem.restart, false);
+      assert.equal(f.settings.track_activity_query_size.value, '1024');
+      assert.equal('reserved_connections' in f.settings, pg16);
+      assert.ok(f.connections.used >= 1);
+      assert.ok(f.connections.groups.some(g => g.user === 'postgres'));
+      assert.equal(f.pgStatStatements?.preloaded, true);
+    } finally { await adapter.close(); }
+  });
+}

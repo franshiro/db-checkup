@@ -1,3 +1,4 @@
+import type { ServerFacts } from './config.js';
 export type Dialect = 'postgres' | 'mysql';
 export const MIN_TABLE_ROWS = 10000, LONG_RUNNING_SECONDS = 5, DEFAULT_TOP = 10, QUERY_PREVIEW_CHARS = 200;
 export interface ServerInfo { dialect: Dialect; flavor: 'postgres' | 'mysql' | 'mariadb'; version: string; database: string; statsSince: Date | null; warnings: string[] }
@@ -27,6 +28,7 @@ export interface DbAdapter {
   unusedIndexes(limit: number): Promise<IndexInfo[]>;
   longRunning(minSeconds: number): Promise<RunningQuery[]>;
   lockWaits(): Promise<LockWait[]>;
+  serverConfig(): Promise<ServerFacts>;
   describeError(err: unknown): string | null;   // privilege hint for access-denied errors
   close(): Promise<void>;
 }

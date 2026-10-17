@@ -6,12 +6,22 @@ import type { MysqlOptions } from '../connection.js';
 import { mysqlScans } from '../plan.js';
 import { normalizeDigest } from '../sql-usage.js';
 import { hasPlaceholder } from '../mask.js';
+import { MYSQL_STATIC } from '../config.js';
+import type { ServerFacts, Setting } from '../config.js';
+
+const MY_VARS = ['innodb_buffer_pool_size', 'key_buffer_size', 'aria_pagecache_buffer_size', 'sort_buffer_size', 'join_buffer_size', 'read_buffer_size',
+  'read_rnd_buffer_size', 'thread_stack', 'binlog_cache_size', 'max_connections', 'wait_timeout', 'interactive_timeout', 'performance_schema',
+  'slow_query_log', 'long_query_time', 'innodb_buffer_pool_chunk_size', 'innodb_buffer_pool_instances'];
+const MY_BYTES = new Set(['innodb_buffer_pool_size', 'key_buffer_size', 'aria_pagecache_buffer_size', 'sort_buffer_size', 'join_buffer_size',
+  'read_buffer_size', 'read_rnd_buffer_size', 'thread_stack', 'binlog_cache_size', 'innodb_buffer_pool_chunk_size']);
+const inList = (xs: string[]) => xs.map(x => `'${x}'`).join(',');
 
 const PS_HINT = `performance_schema belum aktif. Cara mengaktifkan:
 - Server sendiri: tambahkan performance_schema = ON di my.cnf, lalu restart.
 - AWS RDS: ubah parameter group performance_schema = 1, lalu reboot.
 - Google Cloud SQL: nyalakan flag performance_schema.
 - Catatan: di MariaDB, nilai default-nya mati.`;
+const isOn = (v?: string) => /^(on|1|true|yes)$/i.test(v ?? '');
 const NO_SYS = 'schema sys tidak tersedia';
 
 export async function createMysqlAdapter(opts: MysqlOptions): Promise<DbAdapter> {
@@ -126,6 +136,31 @@ export async function createMysqlAdapter(opts: MysqlOptions): Promise<DbAdapter>
       if (!await hasSys()) throw new SkipError(NO_SYS);
       const rows = await q(`SELECT waiting_pid, waiting_query, blocking_pid, blocking_query, wait_age_secs FROM sys.innodb_lock_waits WHERE locked_table LIKE CONCAT('\`', DATABASE(), '\`.%')`);
       return rows.map(r => ({ waitingPid: Number(r.waiting_pid), waitingQuery: r.waiting_query, blockingPid: Number(r.blocking_pid), blockingQuery: r.blocking_query, seconds: Number(r.wait_age_secs) }));
+    },
+
+    async serverConfig(): Promise<ServerFacts> {
+      const settings: Record<string, Setting> = {};
+      for (const r of await q(`SHOW GLOBAL VARIABLES WHERE Variable_name IN (${inList(MY_VARS)})`))
+        settings[r.Variable_name] = { value: String(r.Value), restart: MYSQL_STATIC.has(r.Variable_name),
+          ...(MY_BYTES.has(r.Variable_name) && Number.isFinite(Number(r.Value)) ? { bytes: Number(r.Value) } : {}) };
+      const status: Record<string, number> = {};
+      for (const r of await q(`SHOW GLOBAL STATUS WHERE Variable_name IN ('Threads_connected','Max_used_connections','Connection_errors_max_connections')`))
+        status[r.Variable_name] = Number(r.Value);
+      const groups = (await q(`SELECT USER AS u, SUBSTRING_INDEX(HOST, ':', 1) AS h, COMMAND AS c, COUNT(*) AS n, SUM(COMMAND = 'Sleep' AND TIME > 600) AS idle_long
+        FROM information_schema.PROCESSLIST GROUP BY USER, h, COMMAND`)).map(r => ({
+        user: r.u ?? '', app: r.h ?? '', state: r.c ?? '', count: Number(r.n), idleLong: Number(r.idle_long) }));
+      let partial = false;
+      try {
+        const grants = (await q('SHOW GRANTS')).map(r => Object.values(r)[0]).join('\n');
+        partial = !/\bPROCESS\b|\bALL PRIVILEGES\b/i.test(grants);
+      } catch { partial = true; }
+      let digestConsumer = false;
+      if (isOn(settings.performance_schema?.value))
+        digestConsumer = (await q(`SELECT ENABLED FROM performance_schema.setup_consumers WHERE NAME = 'statements_digest'`))[0]?.ENABLED === 'YES';
+      return { flavor: mariadb ? 'mariadb' : 'mysql', version: version.match(/^\d+(\.\d+)*/)?.[0] ?? version, settings,
+        connections: { max: Number(settings.max_connections?.value ?? 0), reserved: 0, used: status.Threads_connected ?? 0,
+          peak: status.Max_used_connections, rejected: status.Connection_errors_max_connections, partial, groups },
+        digestConsumer };
     },
 
     describeError: err => [1142, 1143, 1227, 1044].includes((err as { errno?: number } | null)?.errno ?? 0)
