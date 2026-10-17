@@ -104,6 +104,7 @@ for (const { name, opts } of servers) {
       assert.ok(f.connections.peak! >= 1);
       assert.equal(f.connections.partial, false);
       assert.ok(f.connections.groups.some(g => g.user === 'root'));
+      assert.ok(f.connections.groups.some(g => g.database === 'shop'));
       if (name === 'mariadb') assert.ok(f.settings.aria_pagecache_buffer_size);
       else assert.equal(f.digestConsumer, true);
     } finally { await adapter.close(); }

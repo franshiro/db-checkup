@@ -22,6 +22,11 @@ const PS_HINT = `performance_schema belum aktif. Cara mengaktifkan:
 - Google Cloud SQL: nyalakan flag performance_schema.
 - Catatan: di MariaDB, nilai default-nya mati.`;
 const isOn = (v?: string) => /^(on|1|true|yes)$/i.test(v ?? '');
+// True only for a global (ON *.*) grant of PROCESS or ALL PRIVILEGES; database-level grants do not show other users' threads.
+export const hasGlobalProcess = (grants: string[]) => grants.some(g => {
+  const m = /^GRANT\s+(.+?)\s+ON\s+\*\.\*\s+TO\b/is.exec(g);
+  return !!m && /\bPROCESS\b|\bALL(\s+PRIVILEGES)?\b/i.test(m[1]);
+});
 const NO_SYS = 'schema sys tidak tersedia';
 
 export async function createMysqlAdapter(opts: MysqlOptions): Promise<DbAdapter> {
@@ -39,6 +44,7 @@ export async function createMysqlAdapter(opts: MysqlOptions): Promise<DbAdapter>
     maxSqlText = Number((await q('SELECT @@performance_schema_max_sql_text_length AS n'))[0].n);
     if (!Number.isFinite(maxSqlText)) maxSqlText = 0;   // fail closed: every sample counts as truncated
   } catch (err) { await conn.end().catch(() => {}); throw err; }
+  const canProcess = async () => hasGlobalProcess((await q('SHOW GRANTS')).map(r => String(Object.values(r)[0])));
   const hasSys = async () => (await q(`SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = 'sys'`)).length > 0;
   const indexes = async (): Promise<IndexInfo[]> => {
     const rows = await q(`SELECT CONCAT(TABLE_SCHEMA, '.', TABLE_NAME) AS tbl, INDEX_NAME AS name, COLUMN_NAME AS col, NON_UNIQUE AS non_unique
@@ -61,8 +67,7 @@ export async function createMysqlAdapter(opts: MysqlOptions): Promise<DbAdapter>
       if (mariadb) warnings.push('MariaDB: dukungan terbatas. Saran index hanya berdasarkan analisa teks (keyakinan rendah).');
       if (/^5\./.test(version)) warnings.push('MySQL 5.7 sudah end-of-life dan tidak didukung resmi; sebagian analisa dilewati.');
       try {
-        const grants = (await q('SHOW GRANTS')).map(r => Object.values(r)[0]).join('\n');
-        if (!/\bPROCESS\b|\bALL PRIVILEGES\b/i.test(grants)) warnings.push('Tanpa privilege PROCESS, daftar query yang sedang jalan hanya berisi query milik user ini.');
+        if (!await canProcess()) warnings.push('Tanpa privilege PROCESS, daftar query yang sedang jalan hanya berisi query milik user ini.');
       } catch { /* optional metadata */ }
       let statsSince: Date | null = null;
       try {
@@ -146,17 +151,14 @@ export async function createMysqlAdapter(opts: MysqlOptions): Promise<DbAdapter>
       const status: Record<string, number> = {};
       for (const r of await q(`SHOW GLOBAL STATUS WHERE Variable_name IN ('Threads_connected','Max_used_connections','Connection_errors_max_connections')`))
         status[r.Variable_name] = Number(r.Value);
-      const groups = (await q(`SELECT USER AS u, SUBSTRING_INDEX(HOST, ':', 1) AS h, COMMAND AS c, COUNT(*) AS n, SUM(COMMAND = 'Sleep' AND TIME > 600) AS idle_long
-        FROM information_schema.PROCESSLIST GROUP BY USER, h, COMMAND`)).map(r => ({
-        user: r.u ?? '', app: r.h ?? '', state: r.c ?? '', count: Number(r.n), idleLong: Number(r.idle_long) }));
-      let partial = false;
-      try {
-        const grants = (await q('SHOW GRANTS')).map(r => Object.values(r)[0]).join('\n');
-        partial = !/\bPROCESS\b|\bALL PRIVILEGES\b/i.test(grants);
-      } catch { partial = true; }
+      const groups = (await q(`SELECT USER AS u, DB AS d, SUBSTRING_INDEX(HOST, ':', 1) AS h, COMMAND AS c, COUNT(*) AS n, SUM(COMMAND = 'Sleep' AND TIME > 600) AS idle_long
+        FROM information_schema.PROCESSLIST GROUP BY USER, DB, h, COMMAND`)).map(r => ({
+        ...(r.d ? { database: r.d } : {}), user: r.u ?? '', app: r.h ?? '', state: r.c ?? '', count: Number(r.n), idleLong: Number(r.idle_long) }));
+      const partial = !await canProcess().catch(() => false);
       let digestConsumer = false;
       if (isOn(settings.performance_schema?.value))
-        digestConsumer = (await q(`SELECT ENABLED FROM performance_schema.setup_consumers WHERE NAME = 'statements_digest'`))[0]?.ENABLED === 'YES';
+        try { digestConsumer = (await q(`SELECT ENABLED FROM performance_schema.setup_consumers WHERE NAME = 'statements_digest'`))[0]?.ENABLED === 'YES'; }
+        catch { /* missing privilege: leave false */ }
       return { flavor: mariadb ? 'mariadb' : 'mysql', version: version.match(/^\d+(\.\d+)*/)?.[0] ?? version, settings,
         connections: { max: Number(settings.max_connections?.value ?? 0), reserved: 0, used: status.Threads_connected ?? 0,
           peak: status.Max_used_connections, rejected: status.Connection_errors_max_connections, partial, groups },
