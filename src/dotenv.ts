@@ -88,10 +88,12 @@ export function envCandidates(env: Record<string, string>): EnvCandidate[] {
     });
   }
   const seen = new Set<string>();
-  return [...found, ...urls].filter((c) => {
+  // URLs win a duplicate (they carry ssl), then groups are listed first.
+  const unique = [...urls, ...found].filter((c) => {
     const key = JSON.stringify([c.host, c.port, c.user, c.database]);
     return !seen.has(key) && !!seen.add(key);
   });
+  return [...unique.filter((c) => c.src.endsWith('*')), ...unique.filter((c) => !c.src.endsWith('*'))];
 }
 
 // <project folder>[-<env variant>][-<prefix>], e.g. /x/shop/.env.production + REPORT_DATABASE -> shop-production-report

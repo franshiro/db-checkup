@@ -65,9 +65,11 @@ test('group without type hint and unknown port has null type and port', () => {
 test('same host/port/user/database from URL and group is one candidate', () => {
   const list = envCandidates({
     DB_CONNECTION: 'pgsql', DB_HOST: 'h', DB_DATABASE: 'd', DB_USERNAME: 'u',
-    DATABASE_URL: 'postgres://u:p@h:5432/d',
+    DATABASE_URL: 'postgres://u:p@h:5432/d?sslmode=require',
   });
   assert.equal(list.length, 1);
+  assert.equal(list[0].src, 'DATABASE_URL');
+  assert.equal(list[0].ssl, 'require');
 });
 
 test('defaultName', () => {
