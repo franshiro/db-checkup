@@ -9,11 +9,13 @@ test('isLocalHost', () => {
 });
 
 test('localMemory', async () => {
-  const m = await localMemory(async () => 'MemTotal:       8000000 kB\nMemAvailable:  2048000 kB\n');
-  assert.ok(m.totalMb > 0);
-  if (process.platform === 'linux') assert.equal(m.availableMb, 2000);
-  const none = await localMemory(async () => { throw new Error('no proc'); });
-  assert.equal(none.availableMb, undefined);
+  const fake = async () => 'MemTotal:       8000000 kB\nMemAvailable:  2048000 kB\n';
+  const linux = await localMemory(fake, 'linux');
+  assert.ok(linux.totalMb > 0);
+  assert.equal(linux.availableMb, 2000);
+  assert.equal((await localMemory(fake, 'darwin')).availableMb, undefined);
+  const broken = await localMemory(async () => { throw new Error('no proc'); }, 'linux');
+  assert.equal(broken.availableMb, undefined);
 });
 
 test('hostOf', () => {
