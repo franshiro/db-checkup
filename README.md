@@ -41,7 +41,7 @@ dbc
 ```
 
 - **Layar 1, pilih database:** koneksi tersimpan, ditambah koneksi dari `.env` di folder saat ini atau dari env `DATABASE_URL` kalau belum tersimpan (memilihnya langsung menganalisa tanpa menyimpan). Di bawahnya "+ Tambah koneksi" dan "Pakai connection string sekali".
-- **Layar 2, pilih analisa:** Laporan lengkap, Query paling lambat, Saran index, Kondisi sekarang, Pantau perubahan (jeda default 60 detik), Kesehatan index. Bagian yang tidak dipilih tidak dijalankan ke database. Literal di dalam query selalu disamarkan.
+- **Layar 2, pilih analisa:** Laporan lengkap, Query paling lambat, Saran index, Kondisi sekarang, Pantau perubahan (jeda default 60 detik), Kesehatan index, Konfigurasi server. Bagian yang tidak dipilih tidak dijalankan ke database. Literal di dalam query selalu disamarkan.
 - **Setelah laporan:** Simpan ke .md (default `./<nama>-<YYYYMMDD-HHmm>.md`), Jalankan lagi, Kembali ke menu, Keluar.
 
 Tombol: `↑` `↓` atau `j` `k` untuk gerak, Enter untuk memilih, `d` hapus koneksi tersimpan di layar 1 (dengan konfirmasi). `q`, Esc, atau Ctrl-C kembali satu tingkat: dari setelah laporan ke layar 2, dari layar 2 ke layar 1, dan di layar 1 keluar; pilihan Keluar setelah laporan langsung keluar. Ctrl-C saat analisa berjalan membatalkan analisa dan kembali ke layar 2. Untuk koneksi dari `.env` atau env, layar 2 menyediakan "Simpan koneksi ini". Terminal selalu dikembalikan seperti semula.
@@ -107,7 +107,7 @@ Besar RAM dibaca otomatis dari mesin tempat `dbc` jalan hanya kalau host koneksi
 
 ### Di menu
 
-Pertama kali "Konfigurasi server" atau "Laporan lengkap" dijalankan untuk koneksi tersimpan, `dbc` bertanya "Server ini khusus database?" dan "Besar RAM server (mis. 8G)". Jawaban disimpan di entri koneksi sebagai field opsional `dedicated` (boolean) dan `ram_mb` (bilangan bulat, MB); `dbb` mengabaikannya. Untuk koneksi dari `.env`, env, atau connection string sekali pakai, pertanyaan diajukan setiap kali dan tidak disimpan. Ubah jawaban lewat "Ubah info server" di layar 2. Kalau host atau port koneksi berubah saat ditimpa, kedua field dibuang.
+Pertama kali "Konfigurasi server" atau "Laporan lengkap" dijalankan untuk koneksi tersimpan, `dbc` bertanya "Server ini khusus database?" dan "Besar RAM server (mis. 8G)". Jawaban disimpan di entri koneksi sebagai field opsional `dedicated` (boolean) dan `ram_mb` (bilangan bulat, MB); `dbb` mengabaikannya. Untuk koneksi dari `.env`, env, atau connection string sekali pakai, pertanyaan diajukan setiap kali dan tidak disimpan. Untuk koneksi tersimpan, ubah jawaban lewat "Ubah info server" di layar 2. Kalau host koneksi lokal, RAM yang terbaca dari mesin ini hanya jadi jawaban default yang tetap kamu konfirmasi. Kalau host atau port koneksi berubah saat ditimpa, kedua field dibuang.
 
 ### Di CLI
 
@@ -121,7 +121,7 @@ Urutan prioritas: RAM = `--ram` > `ram_mb` tersimpan > dibaca otomatis (host lok
 
 ### Perintah perubahan
 
-Perintah (`ALTER SYSTEM`, `SET PERSIST`, atau parameter group untuk RDS dan Cloud SQL) hanya ditampilkan dan tidak pernah dijalankan otomatis, dan koneksi `dbc` tetap read-only. Salin dan jalankan sendiri. `ALTER SYSTEM` di Postgres butuh superuser; setting yang ditandai "perlu restart" baru berlaku setelah server di-restart.
+Perintah (`ALTER SYSTEM`, `SET PERSIST`, parameter group untuk RDS, atau database flags untuk Cloud SQL) hanya ditampilkan dan tidak pernah dijalankan otomatis, dan koneksi `dbc` tetap read-only. Salin dan jalankan sendiri. `ALTER SYSTEM` di Postgres butuh superuser; setting yang ditandai "perlu restart" baru berlaku setelah server di-restart.
 
 ## Hak akses yang dibutuhkan
 
