@@ -33,10 +33,11 @@ export async function loadConnections(path: string): Promise<{ connections: Save
   const seen = new Set<string>();
   const connections: SavedConnection[] = [];
   for (const e of raw) {
-    if (!isObj(e) || !e.name || !e.host || !e.user || !e.database) continue;
+    if (!isObj(e)) continue;
+    if (e.name && seen.has(e.name)) continue;
+    if (e.name) seen.add(e.name); // a hidden first entry shadows later duplicates, like save/remove
+    if (!e.name || !e.host || !e.user || !e.database) continue;
     if (e.type !== 'postgres' && e.type !== 'mysql') continue;
-    if (seen.has(e.name)) continue;
-    seen.add(e.name);
     connections.push({ ...e, port: e.port || DEFAULT_PORT[e.type as 'postgres' | 'mysql'], password: e.password ?? '' } as SavedConnection);
   }
   const warnings: string[] = [];

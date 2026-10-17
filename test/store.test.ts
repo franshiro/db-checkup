@@ -109,3 +109,17 @@ test('connectionUrl round-trips', () => {
   assert.equal(parseConnectionUrl(url).dialect, 'postgres');
   assert.doesNotThrow(() => parseConnectionUrl(connectionUrl(conn('m', { type: 'mysql', ssl: 'skip-verify' }))));
 });
+
+test('hidden first entry shadows a valid duplicate; save/remove hit the same raw entry', async () => {
+  const p = join(dir, 'shadow.json');
+  const hidden = { ...base, name: 'a', type: 'oracle' };
+  const dup = { ...base, name: 'a', host: 'dup' };
+  const write = () => writeFile(p, JSON.stringify([hidden, dup]));
+  await write();
+  assert.deepEqual((await loadConnections(p)).connections, []);
+  await saveConnection(p, conn('a', { host: 'new' }));
+  assert.equal(await readFile(p, 'utf8'), JSON.stringify([{ ...hidden, host: 'new', type: 'postgres' }, dup], null, 2) + '\n');
+  await write();
+  assert.equal(await removeConnection(p, 'a'), true);
+  assert.equal(await readFile(p, 'utf8'), JSON.stringify([dup], null, 2) + '\n');
+});
