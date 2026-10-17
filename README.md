@@ -22,6 +22,16 @@ Dari repo yang sudah di-clone:
 npm install && npm run build && npm install -g .
 ```
 
+### Uninstall
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/franshiro/db-checkup/main/install.sh | bash -s -- --uninstall
+# atau dari repo yang sudah di-clone:
+./install.sh --uninstall
+```
+
+Perintah `db-checkup` dihapus, begitu juga folder `~/.db-checkup` (atau `DB_CHECKUP_DIR`) yang dibuat oleh script. Repo yang kamu clone sendiri tidak ikut dihapus.
+
 ## Pemakaian
 
 ```sh
