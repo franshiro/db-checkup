@@ -14,7 +14,7 @@ export const formatCount = (n: number) => nf.format(n);
 export const formatMs = (ms: number) =>
   ms < 1000 ? `${nf.format(Math.round(ms))} ms` : ms < 60000 ? `${nf1.format(ms / 1000)} s` : `${nf1.format(ms / 60000)} min`;
 
-function configBlocks(c: ConfigResult): Block[] {
+function configBlocks(c: ConfigResult, flavor: string): Block[] {
   const k = c.connections, m = c.memory, b: Block[] = [];
   const text = (t: string, level?: 'warn'): Block => ({ kind: 'text', text: t, ...(level ? { level } : {}) });
   const ccols = ['Batas efektif', 'Terpakai', '%', ...(k.peak !== undefined ? ['Puncak'] : []), ...(k.rejected !== undefined ? ['Ditolak'] : [])];
@@ -24,7 +24,7 @@ function configBlocks(c: ConfigResult): Block[] {
   for (const a of k.advice) b.push(text(a, 'warn'));
   if (k.groups.length) b.push({ kind: 'table', headers: ['Database', 'User', 'Aplikasi', 'Status', 'Jumlah', 'Idle lama'],
     rows: k.groups.map(g => [g.database ?? '-', g.user, g.app || '-', g.state, formatCount(g.count), formatCount(g.idleLong)]) });
-  if (k.partial) b.push(text(`Data koneksi sebagian (${c.flavor === 'postgres' ? 'butuh role pg_read_all_stats' : 'butuh PROCESS'}): hak akses terbatas, hanya sesi milik user ini yang terlihat.`, 'warn'));
+  if (k.partial) b.push(text(`Data koneksi sebagian (${flavor === 'postgres' ? 'butuh role pg_read_all_stats' : 'butuh PROCESS'}): hak akses terbatas, hanya sesi milik user ini yang terlihat.`, 'warn'));
   const ram = m.totalMb === undefined ? 'tidak diketahui' : `${formatSize(m.totalMb)} (${{ lokal: 'dibaca dari mesin ini', manual: 'diisi manual', flag: '--ram' }[m.source ?? 'flag']})`;
   b.push(text(`Total RAM: ${ram}${m.availableMb !== undefined ? `, tersedia ${formatSize(m.availableMb)}` : ''}. Jenis: ${m.dedicated ? 'khusus database' : 'berbagi'}.`));
   if (m.quotaMb !== undefined) b.push(text(`Jatah RAM: ${formatSize(m.quotaMb)}. Perkiraan terburuk sekarang: ${formatSize(m.worstMb)}.`));
@@ -90,7 +90,7 @@ export function buildReport(r: AnalysisResult, opts: { mask: boolean }): Report 
   sections.push(list('Query yang saling mengunci', r.locks, ['PID menunggu', 'Query menunggu', 'PID pengunci', 'Query pengunci', 'Detik'],
     l => [String(l.waitingPid), preview(l.waitingQuery), String(l.blockingPid), l.blockingQuery === null ? '-' : preview(l.blockingQuery), formatCount(Math.round(l.seconds))]));
 
-  sections.push(section('Konfigurasi server', r.config, configBlocks));
+  sections.push(section('Konfigurasi server', r.config, c => configBlocks(c, r.info.flavor)));
 
   const i = r.info;
   const summary: Block[] = [
