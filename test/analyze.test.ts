@@ -73,3 +73,11 @@ test('abort before a step skips it', async () => {
     { connection: 'c', top: 10, parts: ['foreignKeys', 'tableScans'], signal: ac.signal }), (e: Error) => e.name === 'AbortError');
   assert.equal(scanned, false);
 });
+
+test('abort between EXPLAINs stops before the next one', async () => {
+  const ac = new AbortController(); let calls = 0;
+  const st = (key: string) => ({ key, query: `select * from t where a = ${key}`, calls: 1, totalMs: 1, meanMs: 1, rows: 1 });
+  await assert.rejects(analyze(fakeAdapter({ statements: async () => [st('1'), st('2')] as any, explain: async () => { calls++; ac.abort(); return []; } }),
+    { connection: 'c', top: 10, parts: ['suggestions'], signal: ac.signal }), (e: Error) => e.name === 'AbortError');
+  assert.equal(calls, 1);
+});

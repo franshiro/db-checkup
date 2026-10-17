@@ -49,6 +49,7 @@ export async function analyze(adapter: DbAdapter, opts: { connection: string; to
     for (const s of own ?? []) uniq.set(s.key, s);
     const items: Suggestion[] = [], skipped: { query: string; reason: string }[] = [];
     for (const stat of uniq.values()) {
+      signal?.throwIfAborted();
       let scans: PlanScan[] | null = null, noPlanReason: string | undefined;
       try { scans = await adapter.explain(stat); } catch (err) { noPlanReason = err instanceof SkipError ? err.message : maskError(err); }
       try {
