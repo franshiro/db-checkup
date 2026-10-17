@@ -20,6 +20,8 @@ import { redact } from './cli.js';
 import { parseSize } from './config.js';
 import type { ServerMemory } from './config.js';
 import { hostOf, isLocalHost, localMemory } from './sysmem.js';
+import { defaultRun, packageRoot, settingsInfo, uninstallDbc, updateDbc } from './settings.js';
+import type { Run } from './settings.js';
 
 export interface MenuDeps {
   term: Term; env: Record<string, string | undefined>; cwd: string; storePath: string; version: string;
@@ -27,6 +29,7 @@ export interface MenuDeps {
   now(): Date;
   onInterrupt(cb: () => void): () => void;
   memory?: typeof localMemory;
+  settings?: { root: string; run: Run };   // injected in tests: never run the real installer
 }
 
 // `from` set = not saved (row from .env or env DATABASE_URL); conn is then an EnvCandidate.
@@ -100,7 +103,7 @@ export async function runMenu(d: MenuDeps): Promise<number> {
         const w = Math.max(0, ...rows.map(r => r.name.length));
         const items = [
           ...rows.map(r => ({ label: r.name.padEnd(w), desc: `${r.conn.type ?? '?'}  ${r.conn.host}${r.from ? '  · ' + r.from : ''}` })),
-          { label: '+ Tambah koneksi' }, { label: 'Pakai connection string sekali' },
+          { label: '+ Tambah koneksi' }, { label: 'Pakai connection string sekali' }, { label: '⚙ Settings' },
         ];
         const s = await select(t, 'Pilih database', items, { initial: cur, keys: [{ key: 'd', label: 'hapus' }] });
         if (!s) return 0;
@@ -114,6 +117,7 @@ export async function runMenu(d: MenuDeps): Promise<number> {
           continue;
         }
         if (s.index === rows.length) { await addMenu(d); continue; }
+        if (s.index === rows.length + 2) { if (await settingsMenu(d) === 'quit') return 0; continue; }
         let r: 'back' | 'quit';
         if (s.index === rows.length + 1) {
           const url = await ask(t, 'Connection string', { hidden: true });
@@ -143,6 +147,22 @@ async function addMenu(d: MenuDeps): Promise<void> {
   if (!s) return;
   const deps = { term: d.term, storePath: d.storePath, createAdapter: d.createAdapter, out: d.term.output };
   if (s.index === 0) await addFromEnv(deps, d.cwd); else await addManual(deps);
+}
+
+// Settings: update, uninstall, info. Uninstall ends the menu.
+async function settingsMenu(d: MenuDeps): Promise<'back' | 'quit'> {
+  const t = d.term;
+  const sd = { ...(d.settings ?? { root: packageRoot(), run: defaultRun }), out: t.output };
+  for (;;) {
+    const s = await select(t, 'Settings', [{ label: 'Update', desc: 'ambil versi terbaru' }, { label: 'Uninstall', desc: 'hapus dbc dari komputer ini' }, { label: 'Info' }, { label: '← Kembali' }], { quitLabel: 'kembali' });
+    if (!s || s.index === 3) return 'back';
+    if (s.index === 0) await updateDbc(sd);
+    if (s.index === 1) {
+      if (!await confirm(t, 'Hapus perintah dbc dan folder instalasinya? File koneksi tidak ikut dihapus.')) continue;
+      if (await uninstallDbc(sd) === 0) return 'quit';
+    }
+    if (s.index === 2) t.output.write(settingsInfo(d.version, sd.root, d.storePath));
+  }
 }
 
 // Screen 2 for one open connection; closes it on the way out.

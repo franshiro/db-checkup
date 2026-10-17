@@ -353,3 +353,47 @@ test('Esc on the server question returns to screen 2 without analyzing', async (
   assert.equal(calls, 0);
   assert.deepEqual((await loadConnections(sp)).connections, [bare]);
 });
+
+// Settings never runs a real command: `run` is a recorder.
+function settingsFake() {
+  const calls: string[] = [];
+  return { calls, settings: { root: '/opt/dbc-test', run: async (cmd: string, args: string[]) => { calls.push([cmd, ...args].join(' ')); return { code: 0, out: '' }; } } };
+}
+
+test('Settings → Info shows version, install folder, connection file; back and quit', async () => {
+  const f = settingsFake();
+  const { h, run } = harness({ settings: f.settings });
+  const done = run();
+  await h.keys(DOWN, DOWN, '\r');          // ⚙ Settings (empty list: + Tambah, sekali, Settings)
+  await h.until('Settings');
+  await h.keys(DOWN, DOWN, '\r');          // Info
+  await h.until('/opt/dbc-test');
+  await h.keys('q', 'q');
+  assert.equal(await done, 0);
+  assert.ok(h.out().includes('9.9.9') && h.out().includes(sp));
+  assert.deepEqual(f.calls, []);
+  assert.match(h.out(), /q kembali/);
+});
+
+test('Settings → Uninstall asks first; "n" runs nothing, "y" runs the uninstaller and exits', async () => {
+  const f = settingsFake();
+  const { h, run } = harness({ settings: f.settings });
+  const done = run();
+  await h.keys(DOWN, DOWN, '\r', DOWN, '\r', 'n');
+  await h.until('tidak');
+  assert.deepEqual(f.calls, []);
+  await h.keys(DOWN, '\r', 'y');
+  assert.equal(await done, 0);
+  assert.deepEqual(f.calls, ['bash -s -- --uninstall']);
+});
+
+test('Settings → Update without install.sh refuses and runs nothing', async () => {
+  const f = settingsFake();
+  const { h, run } = harness({ settings: f.settings });
+  const done = run();
+  await h.keys(DOWN, DOWN, '\r', '\r');    // Update (no install.sh in /opt/dbc-test → refuses, runs nothing)
+  await h.until('install.sh');
+  await h.keys('q', 'q');
+  assert.equal(await done, 0);
+  assert.deepEqual(f.calls, []);
+});

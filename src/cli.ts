@@ -18,6 +18,8 @@ import { connectionUrl, loadConnections, removeConnection, storePath } from './s
 import { confirm, select } from './tui.js';
 import type { Term } from './tui.js';
 import { runMenu } from './menu.js';
+import { defaultRun, packageRoot, uninstallDbc, updateDbc } from './settings.js';
+import type { Run } from './settings.js';
 import { parseSize } from './config.js';
 import type { ServerMemory } from './config.js';
 import { hostOf, isLocalHost, localMemory } from './sysmem.js';
@@ -41,6 +43,8 @@ Perintah:
   list                     daftar koneksi tersimpan
   remove [nama] [--yes]    hapus koneksi tersimpan
   <nama>                   analisa koneksi tersimpan
+  update                   ambil versi terbaru dbc
+  uninstall [--yes]        hapus dbc dari komputer ini (file koneksi tidak dihapus)
 
 Opsi:
   --top <n>           jumlah query teratas (default ${DEFAULT_TOP})
@@ -76,7 +80,7 @@ export function redact(msg: string, url: string | undefined): string {
 }
 
 export async function main(argv: string[], env: Record<string, string | undefined>,
-  io: { stdout: Out; stderr: Out; stdin?: Term['input'] }, deps: { createAdapter(c: ConnectionConfig): Promise<DbAdapter>; storePath?: string; memory?: typeof localMemory } = { createAdapter: defaultCreateAdapter }): Promise<number> {
+  io: { stdout: Out; stderr: Out; stdin?: Term['input'] }, deps: { createAdapter(c: ConnectionConfig): Promise<DbAdapter>; storePath?: string; memory?: typeof localMemory; settings?: { root: string; run: Run } } = { createAdapter: defaultCreateAdapter }): Promise<number> {
   const { stdout, stderr } = io;
   let url: string | undefined;
   // Semua pesan ke stderr melewati sini: password (asli dan hasil decode) diganti ***.
@@ -107,6 +111,7 @@ export async function main(argv: string[], env: Record<string, string | undefine
   if (!argv.length && term) return runMenu({
     term, env, cwd: process.cwd(), storePath: sp, version: version(), createAdapter: deps.createAdapter, now: () => new Date(),
     onInterrupt: cb => { process.on('SIGINT', cb); return () => { process.off('SIGINT', cb); }; },
+    ...(deps.settings ? { settings: deps.settings } : {}),
   });
   const cmd = positionals[0];
   const wrap = async (f: () => Promise<number>) => {
@@ -117,6 +122,15 @@ export async function main(argv: string[], env: Record<string, string | undefine
   // Peringatan izin file dicetak sekali per perintah, sebelum menyentuh file.
   const load = async () => { const r = await loadConnections(sp); for (const w of r.warnings) stderr.write(w + '\n'); return r; };
   const addDeps = { term, storePath: sp, createAdapter: deps.createAdapter, out: stdout };
+  const sd = { ...(deps.settings ?? { root: packageRoot(), run: defaultRun }), out: stdout };
+  if (cmd === 'update') return updateDbc(sd);
+  if (cmd === 'uninstall') {
+    if (!values.yes) {
+      if (!term) return fail('Error: uninstall butuh konfirmasi; tambahkan --yes.', 2);
+      if (!await confirm(term, 'Hapus perintah dbc dan folder instalasinya? File koneksi tidak ikut dihapus.')) return 1;
+    }
+    return uninstallDbc(sd);
+  }
   if (cmd === 'add') return wrap(async () => {
     await load();
     if (values.env !== undefined) {

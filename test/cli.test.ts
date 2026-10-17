@@ -104,3 +104,20 @@ test('saved connection uses ram_mb and dedicated:false', async () => {
   assert.equal(await main(['prod'], {}, io, { ...cfgDeps(), storePath: sp }), 0);
   assert.match(io.out(), /2GB/);
 });
+
+test('update and uninstall go to the injected runner only; uninstall needs --yes without a TTY', async () => {
+  const calls: string[] = [];
+  const settings = { root: dir, run: async (cmd: string, args: string[]) => { calls.push([cmd, ...args].join(' ')); return { code: 0, out: '' }; } };
+  const d = { ...deps, storePath: join(dir, 'db.json'), settings };
+  let io = capture();
+  assert.equal(await main(['uninstall'], {}, io, d), 2);
+  assert.match(io.err(), /--yes/);
+  assert.deepEqual(calls, []);
+  io = capture();
+  assert.equal(await main(['uninstall', '--yes'], {}, io, d), 0);
+  assert.deepEqual(calls, ['bash -s -- --uninstall']);
+  io = capture();
+  assert.equal(await main(['update'], {}, io, d), 1);   // temp dir has no install.sh
+  assert.match(io.out(), /install\.sh/);
+  assert.equal(calls.length, 1);
+});

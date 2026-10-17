@@ -32,6 +32,17 @@ curl -fsSL https://raw.githubusercontent.com/franshiro/db-checkup/main/install.s
 
 Perintah `dbc` dan `db-checkup` dihapus, begitu juga folder `~/.db-checkup` (atau `DB_CHECKUP_DIR`) yang dibuat oleh script. Repo yang kamu clone sendiri tidak ikut dihapus.
 
+### Update dan uninstall dari dbc
+
+Di menu, pilih **⚙ Settings** di layar pertama: **Update** (ambil versi terbaru; kalau sudah terbaru, tidak ada yang diubah), **Uninstall** (dengan konfirmasi), dan **Info** (versi, lokasi instalasi, lokasi file koneksi). Dari command line:
+
+```sh
+dbc update
+dbc uninstall          # minta konfirmasi; tanpa terminal pakai --yes
+```
+
+Uninstall tidak menghapus file koneksi `~/.dbb/databases.json`, karena file itu dipakai juga oleh `dbb`. Kalau npm global butuh root, jalankan `sudo dbc update` / `sudo dbc uninstall`.
+
 ## Menu interaktif (`dbc`)
 
 Ketik `dbc` di terminal tanpa argumen untuk membuka menu: pilih koneksi dengan panah, pilih jenis analisa, lihat laporan, lalu simpan ke file `.md`. Menu hanya terbuka kalau stdin dan stdout adalah terminal; di cron atau pipe, `dbc` tanpa argumen memakai `DATABASE_URL` seperti sebelumnya.
