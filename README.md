@@ -90,6 +90,39 @@ Password di connection string selalu disamarkan. Literal di dalam query (string 
 
 Exit code: `0` sukses, `1` gagal konek atau error saat analisa, `2` argumen salah.
 
+## Konfigurasi server
+
+Bagian laporan "Konfigurasi server" (menu layar 2, Laporan lengkap, dan mode CLI) membaca setting dan koneksi database, membandingkannya dengan RAM server, lalu memberi angka rekomendasi beserta perintah perubahan. Yang dicek:
+
+- **Koneksi:** pemakaian dan puncak terhadap batas `max_connections`, rincian per database, user, aplikasi, dan status, serta koneksi `idle` yang lama.
+- **Memori:** perkiraan memori terburuk setting database dibanding jatah RAM, plus rekomendasi `shared_buffers`, `effective_cache_size`, `work_mem`, `maintenance_work_mem` (Postgres) atau `innodb_buffer_pool_size` (MySQL/MariaDB).
+- **Kesiapan analisa:** setting yang belum aktif, mis. `pg_stat_statements`.
+- **Versi server:** tanggal akhir dukungan (EOL).
+
+### Jatah RAM
+
+Jatah RAM untuk database: server **khusus database = 100% RAM**, **berbagi dengan aplikasi = 50% RAM**. Angka rekomendasi dihitung dari jatah itu. Angka ini titik awal dari pedoman umum (PGTune, dokumentasi MySQL), bukan hasil pengukuran beban kerja; sesuaikan dengan kondisi server. Perkiraan terburuk bersifat pesimis (semua koneksi memakai buffer maksimal bersamaan).
+
+Besar RAM dibaca otomatis dari mesin tempat `dbc` jalan hanya kalau host koneksi `localhost`, `127.0.0.1`, `::1`, atau socket; selain itu ditanyakan. Kalau database ada di Docker, VM, atau `localhost` adalah tunnel ke server lain, angka yang terbaca bukan RAM database, jadi laporan selalu menulis sumber angkanya (dibaca dari mesin ini / diisi manual / `--ram`).
+
+### Di menu
+
+Pertama kali "Konfigurasi server" atau "Laporan lengkap" dijalankan untuk koneksi tersimpan, `dbc` bertanya "Server ini khusus database?" dan "Besar RAM server (mis. 8G)". Jawaban disimpan di entri koneksi sebagai field opsional `dedicated` (boolean) dan `ram_mb` (bilangan bulat, MB); `dbb` mengabaikannya. Untuk koneksi dari `.env`, env, atau connection string sekali pakai, pertanyaan diajukan setiap kali dan tidak disimpan. Ubah jawaban lewat "Ubah info server" di layar 2. Kalau host atau port koneksi berubah saat ditimpa, kedua field dibuang.
+
+### Di CLI
+
+```sh
+dbc postgres://user:pass@host/db --ram 8G              # khusus database
+dbc postgres://user:pass@host/db --ram 8G --shared     # berbagi, jatah 50%
+dbc mysql://user:pass@host/db --ram 512M --dedicated
+```
+
+Urutan prioritas: RAM = `--ram` > `ram_mb` tersimpan > dibaca otomatis (host lokal) > tidak diketahui; jenis server = `--shared`/`--dedicated` > `dedicated` tersimpan > khusus database. `--shared` dan `--dedicated` tidak bisa bersamaan. CLI tidak pernah menulis file koneksi. Kalau RAM tidak diketahui, rekomendasi memori dilewati ("RAM server tidak diketahui, pakai --ram"), bagian lain tetap jalan.
+
+### Perintah perubahan
+
+Perintah (`ALTER SYSTEM`, `SET PERSIST`, atau parameter group untuk RDS dan Cloud SQL) hanya ditampilkan dan tidak pernah dijalankan otomatis, dan koneksi `dbc` tetap read-only. Salin dan jalankan sendiri. `ALTER SYSTEM` di Postgres butuh superuser; setting yang ditandai "perlu restart" baru berlaku setelah server di-restart.
+
 ## Hak akses yang dibutuhkan
 
 Kalau hak akses kurang, bagian terkait dilewati dan alasannya ditulis di report.
