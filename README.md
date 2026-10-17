@@ -12,7 +12,7 @@ Butuh Node 20.12 atau lebih baru, dan git.
 curl -fsSL https://raw.githubusercontent.com/franshiro/db-checkup/main/install.sh | bash
 ```
 
-Script mengunduh repo ke `~/.db-checkup`, build, lalu memasang perintah `db-checkup` secara global. Jalankan ulang perintah yang sama untuk update. Folder lain bisa dipilih lewat `DB_CHECKUP_DIR=/opt/db-checkup`. Kalau npm global butuh root, pakai `... | sudo bash`.
+Script mengunduh repo ke `~/.db-checkup`, build, lalu memasang perintah `dbc` (dan `db-checkup`, nama lama) secara global. Jalankan ulang perintah yang sama untuk update. Folder lain bisa dipilih lewat `DB_CHECKUP_DIR=/opt/db-checkup`. Kalau npm global butuh root, pakai `... | sudo bash`.
 
 Dari repo yang sudah di-clone:
 
@@ -30,9 +30,51 @@ curl -fsSL https://raw.githubusercontent.com/franshiro/db-checkup/main/install.s
 ./install.sh --uninstall
 ```
 
-Perintah `db-checkup` dihapus, begitu juga folder `~/.db-checkup` (atau `DB_CHECKUP_DIR`) yang dibuat oleh script. Repo yang kamu clone sendiri tidak ikut dihapus.
+Perintah `dbc` dan `db-checkup` dihapus, begitu juga folder `~/.db-checkup` (atau `DB_CHECKUP_DIR`) yang dibuat oleh script. Repo yang kamu clone sendiri tidak ikut dihapus.
 
-## Pemakaian
+## Menu interaktif (`dbc`)
+
+Ketik `dbc` di terminal tanpa argumen untuk membuka menu: pilih koneksi dengan panah, pilih jenis analisa, lihat laporan, lalu simpan ke file `.md`. Menu hanya terbuka kalau stdin dan stdout adalah terminal; di cron atau pipe, `dbc` tanpa argumen memakai `DATABASE_URL` seperti sebelumnya.
+
+```sh
+dbc
+```
+
+- **Layar 1, pilih database:** koneksi tersimpan, ditambah koneksi dari `.env` di folder saat ini atau dari env `DATABASE_URL` kalau belum tersimpan (memilihnya langsung menganalisa tanpa menyimpan). Di bawahnya "+ Tambah koneksi" dan "Pakai connection string sekali".
+- **Layar 2, pilih analisa:** Laporan lengkap, Query paling lambat, Saran index, Kondisi sekarang, Pantau perubahan (jeda default 60 detik), Kesehatan index. Bagian yang tidak dipilih tidak dijalankan ke database. Literal di dalam query selalu disamarkan.
+- **Setelah laporan:** Simpan ke .md (default `./<nama>-<YYYYMMDD-HHmm>.md`), Jalankan lagi, Kembali ke menu, Keluar.
+
+Tombol: `↑` `↓` atau `j` `k` untuk gerak, Enter untuk memilih, `d` hapus koneksi (dengan konfirmasi), `q` atau Esc keluar. Ctrl-C saat analisa berjalan membatalkan analisa dan kembali ke menu; Ctrl-C di layar menu sama dengan `q`. Terminal selalu dikembalikan seperti semula.
+
+### Tambah koneksi dari `.env`
+
+```sh
+dbc add --env            # ./.env
+dbc add --env path/ke/.env
+dbc add --env path/ke/folder
+```
+
+`DATABASE_URL`-style (`postgres://`, `mysql://`, ...) dan kelompok variabel seperti `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_DATABASE` atau `PGHOST`/`PGUSER`/... dikenali; `${VAR}` diganti, awalan REDIS, MAIL, dan sejenisnya dilewati. Sebelum disimpan, `dbc` mencoba konek dan menyimpan versi server. Menu juga punya "+ Tambah koneksi" untuk tambah dari `.env` atau manual (`dbc add`).
+
+### File koneksi (dibagi dengan `dbb`)
+
+Koneksi disimpan di `~/.dbb/databases.json`, file yang sama dengan `dbb`. Lokasi bisa diganti dengan `DBB_CONFIG` (path file) atau `DBB_HOME` (folder). File berizin `600` dan berisi password, jadi jangan di-commit atau dibagikan; file dengan izin lebih longgar tetap dipakai tapi memunculkan peringatan. `dbc` hanya mengubah entri yang bersangkutan dan mempertahankan field lain milik `dbb`. Field opsional `ssl` (Postgres: nilai `sslmode` seperti `require`, `no-verify`, `verify-full`; MySQL: `true` atau `skip-verify`) hanya dipakai `dbc`; `dbb` mengabaikannya. File yang rusak tidak pernah ditulis.
+
+### Subcommand
+
+```sh
+dbc list                       # daftar koneksi tersimpan (tanpa password)
+dbc add                        # tambah manual
+dbc add --env [FILE|DIR]       # tambah dari .env
+dbc remove [nama] [--yes]      # hapus koneksi
+dbc <nama> [--top n --watch detik --output file --no-mask]   # laporan koneksi tersimpan, tanpa menu
+```
+
+Koneksi bernama `add`, `list`, atau `remove` hanya bisa dipilih lewat menu.
+
+## Pemakaian (connection string langsung)
+
+`db-checkup` adalah nama lain untuk `dbc`; semua contoh di bawah berlaku untuk keduanya.
 
 ```sh
 db-checkup postgres://user:pass@localhost:5432/shop

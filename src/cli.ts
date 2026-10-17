@@ -21,9 +21,13 @@ import { runMenu } from './menu.js';
 
 type Out = { write(s: string): void; isTTY?: boolean };
 
-const USAGE = `Penggunaan: db-checkup [connection-string] [opsi]
+const USAGE = `Penggunaan: dbc [connection-string | nama | perintah] [opsi]
+       (db-checkup adalah nama lain untuk perintah yang sama)
 
 Analisa database Postgres/MySQL (hanya membaca): query lambat, saran index, kondisi saat ini.
+
+Tanpa argumen di terminal interaktif, dbc membuka menu: pilih koneksi, pilih jenis analisa,
+lalu simpan laporan ke file Markdown.
 
 Argumen:
   connection-string   postgres://user:pass@host/db atau mysql://user:pass@host/db
