@@ -30,10 +30,11 @@ export interface DbAdapter {
   describeError(err: unknown): string | null;   // privilege hint for access-denied errors
   close(): Promise<void>;
 }
+export type AnalysisPart = 'statements' | 'suggestions' | 'tableScans' | 'foreignKeys' | 'unusedIndexes' | 'running' | 'locks';
 export interface AnalysisResult {
   connection: string; info: ServerInfo; watchSeconds?: number;
-  current?: Outcome<StatementStat[]>; cumulative: Outcome<StatementStat[]>;
-  suggestions: Outcome<SuggestionResult>;
-  tableScans: Outcome<TableScanStat[]>; foreignKeys: Outcome<ForeignKeyIssue[]>; unusedIndexes: Outcome<IndexInfo[]>;
-  running: Outcome<RunningQuery[]>; locks: Outcome<LockWait[]>;
+  current?: Outcome<StatementStat[]>; cumulative?: Outcome<StatementStat[]>;
+  suggestions?: Outcome<SuggestionResult>;
+  tableScans?: Outcome<TableScanStat[]>; foreignKeys?: Outcome<ForeignKeyIssue[]>; unusedIndexes?: Outcome<IndexInfo[]>;
+  running?: Outcome<RunningQuery[]>; locks?: Outcome<LockWait[]>;
 }

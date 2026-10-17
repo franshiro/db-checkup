@@ -1,14 +1,16 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { LONG_RUNNING_SECONDS, SkipError } from './types.js';
-import type { AnalysisResult, DbAdapter, Outcome, PlanScan, StatementStat, Suggestion } from './types.js';
+import type { AnalysisPart, AnalysisResult, DbAdapter, Outcome, PlanScan, StatementStat, Suggestion } from './types.js';
 import { diffStatements, isOwnOrSystemQuery, topByTotal } from './stats.js';
 import { maskSql } from './mask.js';
 import { SqlParseError } from './sql-usage.js';
 import { suggestIndexes } from './suggest.js';
 
 export async function analyze(adapter: DbAdapter, opts: { connection: string; top: number; watchSeconds?: number;
-  sleep?: (ms: number) => Promise<void>; onTick?: (secondsLeft: number) => void }): Promise<AnalysisResult> {
-  const { top, watchSeconds, sleep = (ms: number) => delay(ms), onTick } = opts;
+  sleep?: (ms: number) => Promise<void>; onTick?: (secondsLeft: number) => void;
+  parts?: AnalysisPart[]; signal?: AbortSignal }): Promise<AnalysisResult> {
+  const { top, watchSeconds, sleep = (ms: number) => delay(ms, undefined, { signal: opts.signal }), onTick, signal } = opts;
+  const want = opts.parts && new Set(opts.parts);
   const { dialect } = adapter;
   const why = (err: unknown) => err instanceof SkipError ? err.message
     : adapter.describeError(err) ?? `Gagal: ${maskError(err)}`;
@@ -18,27 +20,33 @@ export async function analyze(adapter: DbAdapter, opts: { connection: string; to
     return maskSql(dialect === 'postgres' ? m.replace(/"[^"]*"/g, '"?"') : m, dialect);
   };
   const run = async <T>(fn: () => Promise<T>): Promise<Outcome<T>> => {
-    try { return { ok: true, value: await fn() }; } catch (err) { return { ok: false, reason: why(err) }; }
+    try { return { ok: true, value: await fn() }; } catch (err) { if ((err as Error)?.name === 'AbortError') throw err; return { ok: false, reason: why(err) }; }
   };
+  // Unrequested part -> undefined; abort is checked before each step.
+  const part = <T>(p: AnalysisPart, fn: () => Promise<T>): Promise<Outcome<T> | undefined> | undefined =>
+    !want || want.has(p) ? (signal?.throwIfAborted(), run(fn)) : undefined;
 
   const info = await adapter.info();
   const snapshot = async () => (await adapter.statements()).filter(s => !isOwnOrSystemQuery(s.query));
 
   let current: Outcome<StatementStat[]> | undefined;
-  const cumulative = await run(async () => {
+  const cumulative = await part('statements', async () => {
     const s1 = await snapshot();
     if (!watchSeconds) return topByTotal(s1, top);
-    for (let n = watchSeconds; n >= 1; n--) { onTick?.(n); await sleep(1000); }
+    for (let n = watchSeconds; n >= 1; n--) { signal?.throwIfAborted(); onTick?.(n); signal?.throwIfAborted(); await sleep(1000); }
+    signal?.throwIfAborted();
     const s2 = await snapshot();
     current = { ok: true, value: topByTotal(diffStatements(s1, s2), top) };
     return topByTotal(s2, top);
   });
-  if (watchSeconds && !current) current = cumulative as Outcome<StatementStat[]>;
+  if (watchSeconds && cumulative && !current) current = cumulative as Outcome<StatementStat[]>;
 
-  const suggestions = await run(async () => {
+  const suggestions = await part('suggestions', async () => {
+    const own = cumulative ? undefined : topByTotal(await snapshot(), top);
     const [tables, indexes] = await Promise.all([adapter.tables(), adapter.indexes()]);
     const uniq = new Map<string, StatementStat>();
     for (const o of [current, cumulative]) if (o?.ok) for (const s of o.value) uniq.set(s.key, s);
+    for (const s of own ?? []) uniq.set(s.key, s);
     const items: Suggestion[] = [], skipped: { query: string; reason: string }[] = [];
     for (const stat of uniq.values()) {
       let scans: PlanScan[] | null = null, noPlanReason: string | undefined;
@@ -56,10 +64,10 @@ export async function analyze(adapter: DbAdapter, opts: { connection: string; to
   return {
     connection: opts.connection, info, ...(watchSeconds ? { watchSeconds } : {}),
     ...(current ? { current } : {}), cumulative, suggestions,
-    tableScans: await run(() => adapter.tableScans(top)),
-    foreignKeys: await run(() => adapter.unindexedForeignKeys()),
-    unusedIndexes: await run(() => adapter.unusedIndexes(top)),
-    running: await run(() => adapter.longRunning(LONG_RUNNING_SECONDS)),
-    locks: await run(() => adapter.lockWaits()),
+    tableScans: await part('tableScans', () => adapter.tableScans(top)),
+    foreignKeys: await part('foreignKeys', () => adapter.unindexedForeignKeys()),
+    unusedIndexes: await part('unusedIndexes', () => adapter.unusedIndexes(top)),
+    running: await part('running', () => adapter.longRunning(LONG_RUNNING_SECONDS)),
+    locks: await part('locks', () => adapter.lockWaits()),
   };
 }

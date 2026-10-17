@@ -68,3 +68,9 @@ test('formatting', () => {
   assert.equal(formatMs(850), '850 ms'); assert.equal(formatMs(12345), '12,3 s'); assert.equal(formatMs(312000), '5,2 min');
   assert.equal(formatCount(2100000), '2.100.000');
 });
+test('buildReport skips parts that were not run', () => {
+  const ok = { ok: true as const, value: [] };
+  const { connection, info } = sampleResult({});
+  const rep = buildReport({ connection, info, running: ok, locks: ok }, { mask: true });
+  assert.deepEqual(rep.sections.map(s => s.title), ['Ringkasan', 'Query yang sedang jalan lama (> 5 detik)', 'Query yang saling mengunci']);
+});

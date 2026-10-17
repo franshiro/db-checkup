@@ -50,3 +50,26 @@ test('postgres error messages: double-quoted values are masked', async () => {
   const r = await analyze(fakeAdapter({ statements: async () => { throw new Error('invalid input syntax for type integer: "budi@x.com"'); } }), { connection: 'c', top: 10 });
   assert.ok(!r.cumulative.ok && !r.cumulative.reason.includes('budi'), JSON.stringify(r.cumulative));
 });
+const boom = (n: string) => async () => { throw new Error(`unexpected ${n}`); };
+test('parts: only running and locks touch the database', async () => {
+  const r = await analyze(fakeAdapter({ statements: boom('statements'), tables: boom('tables'), indexes: boom('indexes'), tableScans: boom('tableScans'),
+    unindexedForeignKeys: boom('fk'), unusedIndexes: boom('unused'), explain: boom('explain') }), { connection: 'c', top: 10, parts: ['running', 'locks'] });
+  assert.deepEqual(Object.entries(r).filter(([k, v]) => v !== undefined && !['connection', 'info'].includes(k)).map(([k]) => k).sort(), ['locks', 'running']);
+});
+test('parts: suggestions takes its own statement snapshot', async () => {
+  let calls = 0;
+  const r = await analyze(fakeAdapter({ statements: async () => { calls++; return []; } }), { connection: 'c', top: 10, parts: ['suggestions'] });
+  assert.equal(calls, 1); assert.equal(r.cumulative, undefined); assert.equal(r.suggestions?.ok, true);
+});
+test('abort during countdown rejects with AbortError and stops sleeping', async () => {
+  const ac = new AbortController(); let slept = 0, ticks = 0;
+  await assert.rejects(analyze(fakeAdapter(), { connection: 'c', top: 10, watchSeconds: 3, signal: ac.signal,
+    sleep: async () => { slept++; }, onTick: () => { if (++ticks === 2) ac.abort(); } }), (e: Error) => e.name === 'AbortError');
+  assert.equal(slept, 1);
+});
+test('abort before a step skips it', async () => {
+  const ac = new AbortController(); let scanned = false;
+  await assert.rejects(analyze(fakeAdapter({ tableScans: async () => { ac.abort(); return []; }, unindexedForeignKeys: async () => { scanned = true; return []; } }),
+    { connection: 'c', top: 10, parts: ['foreignKeys', 'tableScans'], signal: ac.signal }), (e: Error) => e.name === 'AbortError');
+  assert.equal(scanned, false);
+});

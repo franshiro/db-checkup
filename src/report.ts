@@ -20,14 +20,16 @@ export function buildReport(r: AnalysisResult, opts: { mask: boolean }): Report 
   const empty: Block = { kind: 'text', text: 'Tidak ada temuan.' };
   // Failed outcome -> "Dilewati" text; empty -> "Tidak ada temuan."; else the blocks.
   const skippedLines: Block[] = [];
-  const section = <T>(title: string, o: Outcome<T>, build: (v: T) => Block[] | null): Section => {
+  const section = <T>(title: string, o: Outcome<T> | undefined, build: (v: T) => Block[] | null): Section | undefined =>
+    o && sectionOf(title, o, build);
+  const sectionOf = <T>(title: string, o: Outcome<T>, build: (v: T) => Block[] | null): Section => {
     if (!o.ok) skippedLines.push({ kind: 'text', text: `Dilewati — ${title}: ${o.reason}`, level: 'warn' });
     return { title, blocks: !o.ok ? [{ kind: 'text', text: `Dilewati: ${o.reason}` }] : build(o.value) ?? [empty] };
   };
-  const list = <T>(title: string, o: Outcome<T[]>, headers: string[], row: (x: T, i: number) => string[]) =>
+  const list = <T>(title: string, o: Outcome<T[]> | undefined, headers: string[], row: (x: T, i: number) => string[]) =>
     section(title, o, v => v.length ? [{ kind: 'table', headers, rows: v.map(row) }] : null);
 
-  const statements = (title: string, o: Outcome<StatementStat[]>) => section(title, o, v => {
+  const statements = (title: string, o: Outcome<StatementStat[]> | undefined) => section(title, o, v => {
     if (!v.length) return null;
     const my = v.some(s => s.rowsExamined !== undefined || s.noIndexUsed !== undefined);
     return [{
@@ -37,7 +39,7 @@ export function buildReport(r: AnalysisResult, opts: { mask: boolean }): Report 
     }];
   });
 
-  const sections: Section[] = [];
+  const sections: (Section | undefined)[] = [];
   if (r.current) sections.push(statements(`Query terberat saat ini (${r.watchSeconds} detik terakhir)`, r.current));
   sections.push(statements('Query paling lambat (akumulasi)', r.cumulative));
   sections.push(section('Saran index', r.suggestions, ({ items, skipped }) => {
@@ -67,5 +69,5 @@ export function buildReport(r: AnalysisResult, opts: { mask: boolean }): Report 
     ...i.warnings.map((text): Block => ({ kind: 'text', text, level: 'warn' })),
     ...skippedLines,
   ];
-  return { title: 'Laporan db-checkup', sections: [{ title: 'Ringkasan', blocks: summary }, ...sections] };
+  return { title: 'Laporan db-checkup', sections: [{ title: 'Ringkasan', blocks: summary }, ...sections.filter((x): x is Section => !!x)] };
 }
