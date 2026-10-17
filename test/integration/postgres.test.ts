@@ -62,3 +62,15 @@ for (const url of urls) {
     } finally { await adapter.close(); await client.end(); }
   });
 }
+
+for (const url of urls) {
+  test(`partial indexes are reported unused but never count as coverage (${url})`, { skip }, async () => {
+    const client = await connectWhenReady(url);
+    await client.query('CREATE INDEX dbc_it_partial ON orders (customer_id) WHERE id < 0');
+    const adapter = await createPostgresAdapter(url);
+    try {
+      assert.ok((await adapter.unusedIndexes(50)).some(i => i.name === 'dbc_it_partial'));
+      assert.ok(!(await adapter.indexes()).some(i => i.name === 'dbc_it_partial'));
+    } finally { await adapter.close(); await client.query('DROP INDEX dbc_it_partial'); await client.end(); }
+  });
+}

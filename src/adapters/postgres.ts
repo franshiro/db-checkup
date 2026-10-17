@@ -9,9 +9,11 @@ const ENABLE_HINT = `pg_stat_statements belum aktif. Cara mengaktifkan:
 - Google Cloud SQL: cukup jalankan CREATE EXTENSION pg_stat_statements;`;
 
 // Key columns of an index (INCLUDE columns excluded), stopping at the first expression column (attnum 0).
+// "usable" is false for invalid and partial indexes: they still show as unused, but never count as coverage.
 const INDEXES_SQL = `
   SELECT ix.indexrelid AS oid, n.nspname || '.' || t.relname AS "table", i.relname AS name,
          ix.indisunique AS "unique", ix.indisprimary AS "primary",
+         ix.indisvalid AND ix.indpred IS NULL AS usable,
          (SELECT coalesce(array_agg(a.attname::text ORDER BY k.ord), '{}') FROM unnest(ix.indkey::int2[]) WITH ORDINALITY k(attnum, ord)
             JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k.attnum
            WHERE k.ord <= ix.indnkeyatts
@@ -20,7 +22,7 @@ const INDEXES_SQL = `
     JOIN pg_class i ON i.oid = ix.indexrelid
     JOIN pg_class t ON t.oid = ix.indrelid
     JOIN pg_namespace n ON n.oid = t.relnamespace
-   WHERE t.relkind IN ('r','p') AND ix.indisvalid AND ix.indpred IS NULL AND n.nspname NOT IN ('pg_catalog','information_schema')`;
+   WHERE t.relkind IN ('r','p') AND n.nspname NOT IN ('pg_catalog','information_schema')`;
 
 // Tag on every statement we send, so isOwnOrSystemQuery can hide them from pg_stat_statements results.
 const TAG = '/* db-checkup */ ';
@@ -86,7 +88,7 @@ export async function createPostgresAdapter(url: string, connectTimeoutMs = 1000
     },
 
     async indexes(): Promise<IndexInfo[]> {
-      return (await q(INDEXES_SQL)).map(({ table, name, columns, unique, primary }) => ({ table, name, columns, unique, primary }));
+      return (await q(INDEXES_SQL)).filter(r => r.usable).map(({ table, name, columns, unique, primary }) => ({ table, name, columns, unique, primary }));
     },
 
     async tableScans(limit: number): Promise<TableScanStat[]> {
