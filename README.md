@@ -44,7 +44,7 @@ dbc
 - **Layar 2, pilih analisa:** Laporan lengkap, Query paling lambat, Saran index, Kondisi sekarang, Pantau perubahan (jeda default 60 detik), Kesehatan index. Bagian yang tidak dipilih tidak dijalankan ke database. Literal di dalam query selalu disamarkan.
 - **Setelah laporan:** Simpan ke .md (default `./<nama>-<YYYYMMDD-HHmm>.md`), Jalankan lagi, Kembali ke menu, Keluar.
 
-Tombol: `↑` `↓` atau `j` `k` untuk gerak, Enter untuk memilih, `d` hapus koneksi (dengan konfirmasi), `q` atau Esc keluar. Ctrl-C saat analisa berjalan membatalkan analisa dan kembali ke menu; Ctrl-C di layar menu sama dengan `q`. Terminal selalu dikembalikan seperti semula.
+Tombol: `↑` `↓` atau `j` `k` untuk gerak, Enter untuk memilih, `d` hapus koneksi tersimpan di layar 1 (dengan konfirmasi). `q`, Esc, atau Ctrl-C kembali satu tingkat: dari setelah laporan ke layar 2, dari layar 2 ke layar 1, dan di layar 1 keluar; pilihan Keluar setelah laporan langsung keluar. Ctrl-C saat analisa berjalan membatalkan analisa dan kembali ke layar 2. Untuk koneksi dari `.env` atau env, layar 2 menyediakan "Simpan koneksi ini". Terminal selalu dikembalikan seperti semula.
 
 ### Tambah koneksi dari `.env`
 
