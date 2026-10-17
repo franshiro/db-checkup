@@ -17,12 +17,16 @@ import { ask, confirm, logo, select } from './tui.js';
 import type { Term } from './tui.js';
 import { DEFAULTS, addFromEnv, addManual } from './add.js';
 import { redact } from './cli.js';
+import { parseSize } from './config.js';
+import type { ServerMemory } from './config.js';
+import { hostOf, isLocalHost, localMemory } from './sysmem.js';
 
 export interface MenuDeps {
   term: Term; env: Record<string, string | undefined>; cwd: string; storePath: string; version: string;
   createAdapter(c: ConnectionConfig): Promise<DbAdapter>;
   now(): Date;
   onInterrupt(cb: () => void): () => void;
+  memory?: typeof localMemory;
 }
 
 // `from` set = not saved (row from .env or env DATABASE_URL); conn is then an EnvCandidate.
@@ -35,6 +39,7 @@ const CHOICES: { label: string; parts?: AnalysisPart[]; watch?: true }[] = [
   { label: 'Kondisi sekarang', parts: ['running', 'locks'] },
   { label: 'Pantau perubahan', parts: ['statements', 'suggestions'], watch: true },
   { label: 'Kesehatan index', parts: ['tableScans', 'foreignKeys', 'unusedIndexes'] },
+  { label: 'Konfigurasi server', parts: ['config'] },
 ];
 
 const msg = (err: unknown) => (err as Error)?.message ?? String(err);
@@ -145,20 +150,22 @@ async function session(d: MenuDeps, name: string, url: string, unsaved?: SavedCo
   const t = d.term;
   const out = (s: string) => { t.output.write(s); };
   const fail = (prefix: string, err: unknown) => out(`${prefix}${redact(msg(err), url)}\n`);
-  let adapter: DbAdapter | undefined, info: ServerInfo;
+  let adapter: DbAdapter | undefined, info: ServerInfo, host = '';
+  let stored = unsaved || !name ? undefined : name;   // store entry that receives server answers
   try {
     try {
       const config = parseConnectionUrl(url);
+      host = hostOf(config);
       name ||= config.database;
       adapter = await d.createAdapter(config);
       info = await adapter.info();
     } catch (err) { fail('Gagal konek: ', err); return 'back'; }
 
-    const run = async (parts: AnalysisPart[] | undefined, watchSeconds: number | undefined): Promise<AnalysisResult | null> => {
+    const run = async (parts: AnalysisPart[] | undefined, watchSeconds: number | undefined, server?: ServerMemory): Promise<AnalysisResult | null> => {
       const ac = new AbortController();
       const off = d.onInterrupt(() => ac.abort());
       try {
-        const r = await analyze(adapter!, { connection: redactUrl(url), top: DEFAULT_TOP, parts, watchSeconds, signal: ac.signal,
+        const r = await analyze(adapter!, { connection: redactUrl(url), top: DEFAULT_TOP, parts, watchSeconds, server, today: d.now(), signal: ac.signal,
           onTick: n => out(`\r\x1b[KMenunggu snapshot kedua: ${n} detik…`) });
         if (watchSeconds) out('\r\x1b[K');
         return r;
@@ -170,14 +177,25 @@ async function session(d: MenuDeps, name: string, url: string, unsaved?: SavedCo
     const guard = async (f: () => Promise<void>) => { try { await f(); } catch (err) { fail('Error: ', err); } };
 
     for (;;) {
-      const items = [...CHOICES, ...(unsaved ? [{ label: 'Simpan koneksi ini' }] : []), { label: '← Kembali' }];
+      const items = [...CHOICES, ...(unsaved ? [{ label: 'Simpan koneksi ini' }] : []), ...(stored ? [{ label: 'Ubah info server' }] : []), { label: '← Kembali' }];
       const s = await select(t, `dbc › ${name} (${info.flavor} ${info.version})`, items, { quitLabel: 'kembali' });
-      if (!s || s.index === items.length - 1) return 'back';
-      if (s.index === CHOICES.length) {
-        await guard(async () => { if (await saveRow(d, unsaved!, info.version)) unsaved = undefined; });
+      const label = s && items[s.index].label;
+      if (!s || label === '← Kembali') return 'back';
+      if (label === 'Simpan koneksi ini') {
+        await guard(async () => { const n = await saveRow(d, unsaved!, info.version); if (n) { unsaved = undefined; stored = n; } });
+        continue;
+      }
+      if (label === 'Ubah info server') {
+        await guard(async () => { if (await serverMemory(d, stored, host, true)) out('Info server tersimpan.\n'); });
         continue;
       }
       const choice = CHOICES[s.index];
+      let server: ServerMemory | undefined;
+      if (!choice.parts || choice.parts.includes('config')) {
+        const m = await serverMemory(d, stored, host, false);
+        if (!m) continue;
+        server = m;
+      }
       let watchSeconds: number | undefined;
       if (choice.watch) {
         const v = await ask(t, 'Jeda (detik)', { default: '60' });
@@ -186,7 +204,7 @@ async function session(d: MenuDeps, name: string, url: string, unsaved?: SavedCo
         watchSeconds = Number(v);
       }
       for (;;) {
-        const result = await run(choice.parts, watchSeconds);
+        const result = await run(choice.parts, watchSeconds, server);
         if (!result) break;
         const report = buildReport(result, { mask: true });
         out(renderTerminal(report, { color: t.color }));
@@ -211,12 +229,40 @@ async function saveReport(d: MenuDeps, name: string, report: Report): Promise<vo
   d.term.output.write(`Tersimpan: ${path}\n`);
 }
 
-async function saveRow(d: MenuDeps, c: SavedConnection, version: string): Promise<boolean> {
+// Saved name, or null when cancelled.
+async function saveRow(d: MenuDeps, c: SavedConnection, version: string): Promise<string | null> {
   const name = await ask(d.term, 'Nama (alias)', { default: c.name });
-  if (!name) return false;
+  if (!name) return null;
   const { connections } = await loadConnections(d.storePath);
-  if (connections.some(x => x.name === name) && !await confirm(d.term, `"${name}" sudah ada, timpa?`)) return false;
+  if (connections.some(x => x.name === name) && !await confirm(d.term, `"${name}" sudah ada, timpa?`)) return null;
   await saveConnection(d.storePath, { ...c, name, version });
   d.term.output.write(`Tersimpan: ${name}\n`);
-  return true;
+  return name;
+}
+
+// Server type + RAM for the config part: saved answers, else ask (saved into the stored entry). null = cancelled.
+async function serverMemory(d: MenuDeps, stored: string | undefined, host: string, force: boolean): Promise<ServerMemory | null> {
+  const t = d.term, local = isLocalHost(host), mem = d.memory ?? localMemory;
+  const entry = stored ? (await loadConnections(d.storePath)).connections.find(c => c.name === stored) : undefined;
+  if (!force && entry?.dedicated !== undefined && (entry.ram_mb || local)) {
+    const dedicated = entry.dedicated;
+    if (entry.ram_mb) return { totalMb: entry.ram_mb, source: 'manual', dedicated };
+    try { return { ...await mem(), source: 'lokal', dedicated }; } catch { return { source: null, dedicated }; }
+  }
+  const s = await select(t, 'Server ini khusus database?', [{ label: 'Ya' }, { label: 'Berbagi dengan aplikasi' }], { quitLabel: 'kembali' });
+  if (!s) return null;
+  const dedicated = s.index === 0;
+  let lm: Awaited<ReturnType<typeof mem>> | undefined;
+  if (local) try { lm = await mem(); } catch { /* RAM tidak terbaca: tanpa default */ }
+  const def = lm && (lm.totalMb % 1024 ? `${lm.totalMb}M` : `${lm.totalMb / 1024}G`);
+  let ram: number | null = null;
+  while (ram === null) {
+    const v = await ask(t, `Besar RAM server (mis. 8G${def ? `; ${def} terbaca dari mesin ini` : ''})`, { default: def });
+    if (v === null) return null;
+    ram = parseSize(v);
+    if (ram === null) t.output.write('Ukuran RAM tidak valid (contoh: 8G, 512M)\n');
+  }
+  if (entry) await saveConnection(d.storePath, { ...entry, dedicated, ram_mb: ram });
+  // typed or confirmed by the user: 'manual'; free RAM only meaningful when it is this machine's RAM
+  return { totalMb: ram, ...(lm?.availableMb !== undefined && lm.totalMb === ram ? { availableMb: lm.availableMb } : {}), source: 'manual', dedicated };
 }

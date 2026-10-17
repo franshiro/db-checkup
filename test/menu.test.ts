@@ -9,7 +9,7 @@ import { loadConnections, saveConnection, type SavedConnection } from '../src/st
 import { defaultName } from '../src/dotenv.js';
 import type { Term } from '../src/tui.js';
 import type { DbAdapter } from '../src/types.js';
-import { fakeAdapter } from './helpers.js';
+import { fakeAdapter, pgFacts } from './helpers.js';
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
 const tick = () => new Promise(r => setImmediate(r));
@@ -20,7 +20,8 @@ let dir: string, sp: string;
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'dbc-menu-')); sp = join(dir, 'store', 'databases.json'); });
 afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
 
-const prod: SavedConnection = { name: 'prod', type: 'postgres', host: 'db.prod', port: 5432, user: 'app', password: 'pw-secret', database: 'shop' };
+const bare: SavedConnection = { name: 'prod', type: 'postgres', host: 'db.prod', port: 5432, user: 'app', password: 'pw-secret', database: 'shop' };
+const prod: SavedConnection = { ...bare, dedicated: true, ram_mb: 8192 };   // server info known: no prompts
 
 function harness(over: Partial<MenuDeps> = {}, adapter: Partial<DbAdapter> = {}) {
   const raw: boolean[] = [];
@@ -62,7 +63,7 @@ test('save full report to default .md, back, quit; connection closed once', asyn
   await h.until('Tersimpan');
   const md = await readFile(join(dir, 'prod-20261017-0905.md'), 'utf8');
   assert.ok(md.startsWith('# Laporan db-checkup'));
-  await h.keys(...Array(6).fill(DOWN), '\r', 'q');
+  await h.keys(...Array(8).fill(DOWN), '\r', 'q');
   assert.equal(await p, 0);
   assert.equal(h.closes, 1);
   assert.ok(h.out().includes('dbc › prod (postgres 16.0)'));
@@ -88,7 +89,7 @@ test('.env row: "Simpan koneksi ini" saves under defaultName', async () => {
   const p = run();
   await h.keys('\r');
   await h.until('Simpan koneksi ini');
-  await h.keys(...Array(6).fill(DOWN), '\r', '\r');
+  await h.keys(...Array(7).fill(DOWN), '\r', '\r');
   await h.until('Tersimpan');
   await h.keys('q', 'q');
   assert.equal(await p, 0);
@@ -109,7 +110,7 @@ test('one-off connection string analyzes without touching the store; password hi
   const p = run();
   await h.keys(DOWN, '\r', ...'postgres://x:sekret9@h/db', '\r');
   await h.until('dbc ›');
-  await h.keys('\r');
+  await h.keys('\r', '\r', '8', 'G', '\r');
   await h.until('Ringkasan');
   await h.keys(DOWN, DOWN, DOWN, '\r'); // Keluar
   assert.equal(await p, 0);
@@ -172,7 +173,7 @@ test('Ctrl-C during watch cancels and returns to screen 2', async () => {
   await h.until('Menunggu');
   h.interrupt!();
   await h.until('Dibatalkan');
-  await h.keys(...Array(6).fill(DOWN), '\r', 'q');
+  await h.keys(...Array(8).fill(DOWN), '\r', 'q');
   assert.equal(await p, 0);
   assert.equal(h.interrupt, undefined);
   assert.equal(h.closes, 1);
@@ -197,7 +198,7 @@ test('unsafe connection name characters become - in the default file name', asyn
   await h.keys('\r', '\r', '\r', '\r');
   await h.until('Tersimpan');
   assert.ok(await exists(join(dir, 'a-b-20261017-0905.md')));
-  await h.keys(...Array(6).fill(DOWN), '\r', 'q');
+  await h.keys(...Array(8).fill(DOWN), '\r', 'q');
   assert.equal(await p, 0);
 });
 
@@ -256,4 +257,99 @@ test('report path with ~ expands to the home directory', async () => {
   } finally { process.env.HOME = oldHome; }
   await h.keys('q', 'q');
   await p;
+});
+
+const CONFIG = Array(6).fill(DOWN);   // screen 2 -> "Konfigurasi server"
+const facts = { serverConfig: async () => pgFacts() as any };
+
+test('Konfigurasi server asks once for a saved connection and stores the answers', async () => {
+  await saveConnection(sp, bare);
+  const { h, run } = harness({}, facts);
+  const p = run();
+  await h.keys('\r', ...CONFIG, '\r');
+  await h.until('Server ini khusus database?');
+  await h.keys(DOWN, '\r', '8', 'G', '\r');
+  await h.until('Selanjutnya');
+  assert.ok(h.out().includes('Konfigurasi server'));
+  assert.ok(h.out().includes('Jatah RAM: 4GB'));
+  assert.deepEqual((await loadConnections(sp)).connections, [{ ...bare, dedicated: false, ram_mb: 8192 }]);
+  const asked = h.out().split('khusus database?').length;
+  await h.keys(DOWN, DOWN, '\r', 'q');            // Kembali ke menu, back to screen 1
+  await h.keys('\r', ...CONFIG, '\r');            // next session: no questions
+  await h.keys(DOWN, DOWN, DOWN, '\r');           // Selanjutnya -> Keluar
+  assert.equal(await p, 0);
+  assert.equal(h.out().split('khusus database?').length, asked);
+  assert.equal(h.out().split('Jatah RAM: 4GB').length - 1, 2);
+});
+
+test('local host: RAM prompt defaults to the RAM read from this machine', async () => {
+  await saveConnection(sp, { ...bare, host: 'localhost' });
+  const { h, run } = harness({ memory: async () => ({ totalMb: 16384 }) }, facts);
+  const p = run();
+  await h.keys('\r', ...CONFIG, '\r', '\r');
+  await h.until('16G terbaca dari mesin ini');
+  assert.ok(h.out().includes('[16G]'));
+  await h.keys('\r');
+  await h.until('Selanjutnya');
+  await h.keys(DOWN, DOWN, DOWN, '\r');
+  assert.equal(await p, 0);
+  assert.equal((await loadConnections(sp)).connections[0].ram_mb, 16384);
+});
+
+test('.env row: server questions asked, store untouched', async () => {
+  await writeFile(join(dir, '.env'), 'DATABASE_URL=postgres://u:p@h/shop\n');
+  const { h, run } = harness({}, facts);
+  const p = run();
+  await h.keys('\r', ...CONFIG, '\r');
+  await h.until('khusus database?');
+  await h.keys('\r', '8', 'G', '\r');
+  await h.until('Selanjutnya');
+  assert.ok(h.out().includes('Jatah RAM: 8GB'));
+  await h.keys(DOWN, DOWN, DOWN, '\r');
+  assert.equal(await p, 0);
+  assert.equal(await exists(sp), false);
+});
+
+test('invalid RAM size is rejected and asked again', async () => {
+  await saveConnection(sp, bare);
+  const { h, run } = harness({}, facts);
+  const p = run();
+  await h.keys('\r', ...CONFIG, '\r', '\r', 'x', '\r');
+  await h.until('Ukuran RAM tidak valid (contoh: 8G, 512M)');
+  await h.keys('2', 'G', '\r');
+  await h.until('Jatah RAM: 2GB');
+  await h.keys(DOWN, DOWN, DOWN, '\r');
+  assert.equal(await p, 0);
+});
+
+test('"Ubah info server" asks even when info exists and saves the new answers', async () => {
+  await saveConnection(sp, prod);
+  const { h, run } = harness();
+  const p = run();
+  await h.keys('\r', ...Array(7).fill(DOWN), '\r');
+  await h.until('khusus database?');
+  await h.keys(DOWN, '\r', '4', 'G', '\r');
+  await h.until('Info server tersimpan');
+  await h.keys('q', 'q');
+  assert.equal(await p, 0);
+  assert.deepEqual((await loadConnections(sp)).connections, [{ ...bare, dedicated: false, ram_mb: 4096 }]);
+});
+
+test('Esc on the server question returns to screen 2 without analyzing', async () => {
+  await saveConnection(sp, bare);
+  let calls = 0;
+  const { h, run } = harness({}, { serverConfig: async () => { calls++; return pgFacts() as any; } });
+  const p = run();
+  await h.keys('\r', ...CONFIG, '\r');
+  await h.until('khusus database?');
+  const screens = () => h.out().split('dbc › prod').length;
+  const before = screens();
+  await h.keys('\x1b');
+  const end = Date.now() + 5000;
+  while (screens() === before && Date.now() < end) await tick();   // screen 2 drawn again
+  assert.equal(screens(), before + 1);
+  await h.keys('q', 'q');
+  assert.equal(await p, 0);
+  assert.equal(calls, 0);
+  assert.deepEqual((await loadConnections(sp)).connections, [bare]);
 });
