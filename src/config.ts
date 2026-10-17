@@ -36,12 +36,14 @@ const REASON: Record<string, string> = {
   effective_cache_size: '75% jatah RAM (perkiraan cache, tidak mengalokasikan memori)',
   work_mem: '(jatah RAM − shared_buffers) ÷ (max_connections × 3), minimal 4MB',
   maintenance_work_mem: '5% jatah RAM, 64MB–2GB',
+  autovacuum_work_mem: 'Tidak lebih dari maintenance_work_mem yang disarankan',
   innodb_buffer_pool_size: '70% jatah RAM dikurangi buffer per koneksi; MySQL bisa membulatkan lagi ke kelipatan innodb_buffer_pool_chunk_size × innodb_buffer_pool_instances',
   max_connections: 'Nilai terbesar yang masih muat di jatah RAM; pakai connection pooler',
 };
 const fmt = new Intl.NumberFormat('id-ID');
 const isOn = (v?: string) => /^(on|1|true|yes)$/i.test(v ?? '');
 const floor128 = (mb: number) => Math.max(128, Math.floor(mb / 128) * 128);
+const clean = (mb: number) => mb >= 64 ? Math.floor(mb / 8) * 8 : Math.floor(mb);   // shrunk PG size, rounded down so it still fits
 
 export function parseSize(s: string): number | null {
   const m = /^(\d+(?:\.\d+)?)\s*([mg])b?$/i.exec(s.trim());
@@ -75,7 +77,7 @@ export function analyzeConfig(f: ServerFacts, m: ServerMemory, today: Date): Con
   const fixedMy = mbOf('key_buffer_size') + (f.flavor === 'mariadb' ? mbOf('aria_pagecache_buffer_size') : 0);
   const perConn = PER_CONN.reduce((a, k) => a + mbOf(k), 0);
   const worst = (v: Vals) => isPg
-    ? v.shared_buffers + v.max_connections * v.work_mem + avw * (avwm < 0 ? v.maintenance_work_mem : avwm)
+    ? v.shared_buffers + v.max_connections * v.work_mem + avw * (v.autovacuum_work_mem ?? v.maintenance_work_mem)
     : v.innodb_buffer_pool_size + fixedMy + v.max_connections * perConn;
   const maxConn = (v: Vals, J: number) => {
     const base = worst({ ...v, max_connections: 0 });
@@ -83,7 +85,7 @@ export function analyzeConfig(f: ServerFacts, m: ServerMemory, today: Date): Con
   };
   const cur: Vals = isPg
     ? { shared_buffers: mbOf('shared_buffers'), effective_cache_size: mbOf('effective_cache_size'), work_mem: mbOf('work_mem'),
-        maintenance_work_mem: mbOf('maintenance_work_mem'), max_connections: n }
+        maintenance_work_mem: mbOf('maintenance_work_mem'), max_connections: n, ...(avwm < 0 ? {} : { autovacuum_work_mem: avwm }) }
     : { innodb_buffer_pool_size: mbOf('innodb_buffer_pool_size'), max_connections: n };
   const J = m.totalMb ? Math.floor(m.totalMb * (m.dedicated ? 1 : 0.5)) : undefined;
   const memory: ConfigResult['memory'] = { quotaMb: J, totalMb: m.totalMb, availableMb: m.availableMb, source: m.source, dedicated: m.dedicated,
@@ -95,37 +97,51 @@ export function analyzeConfig(f: ServerFacts, m: ServerMemory, today: Date): Con
     const sb = Math.floor(J * 0.25);
     const R: Vals = isPg
       ? { shared_buffers: sb, effective_cache_size: Math.floor(J * 0.75), work_mem: Math.max(4, Math.floor((J - sb) / (Math.max(n, 1) * 3))),
-          maintenance_work_mem: Math.min(2048, Math.max(64, Math.floor(J * 0.05))), max_connections: n }
+          maintenance_work_mem: Math.min(2048, Math.max(64, Math.floor(J * 0.05))), max_connections: n,
+          ...(avwm < 0 ? {} : { autovacuum_work_mem: avwm }) }   // no formula of its own; only lowered on overflow
       : { innodb_buffer_pool_size: floor128(Math.floor(J * 0.7) - n * perConn), max_connections: n };
-    const knob = isPg ? 'work_mem' : 'innodb_buffer_pool_size', changed = new Set<string>();
+    const knob = isPg ? 'work_mem' : 'innodb_buffer_pool_size', changed = new Set<string>(), forced = new Set<string>();
     if (worst(R) > J) {   // step 2: shrink the per-query / pool knob, not below its floor
       const room = J - worst({ ...R, [knob]: 0 });
-      const fit = isPg ? Math.max(4, Math.floor(room / Math.max(n, 1))) : floor128(room);
+      const fit = isPg ? Math.max(4, clean(room / Math.max(n, 1))) : floor128(room);
       if (fit < R[knob]) { R[knob] = fit; changed.add(knob); }
     }
-    if (worst(R) > J && memory.overflow) {   // step 3: knob is at its floor and current settings overflow, cut connections
+    let cut = false;
+    if (memory.overflow) {
+      // R′: every worst-case knob at min(current, R). Lowering memory alone is preferred over cutting connections.
+      const memKeys = isPg ? ['work_mem', 'shared_buffers', 'maintenance_work_mem', 'autovacuum_work_mem'].filter(k => k in cur) : [knob];
+      const Rp: Vals = { ...R, ...Object.fromEntries(memKeys.map(k => [k, Math.min(cur[k], R[k === 'autovacuum_work_mem' ? 'maintenance_work_mem' : k])])) };
+      if (worst(Rp) <= J) {   // smallest set of decreases that fits, ties in memKeys order
+        const cand = memKeys.filter(k => Rp[k] < cur[k]);
+        const sets = [...Array(1 << cand.length).keys()].map(b => cand.filter((_, i) => b >> i & 1)).sort((a, b) => a.length - b.length);
+        for (const k of sets.find(ks => worst({ ...cur, ...Object.fromEntries(ks.map(k => [k, Rp[k]])) }) <= J)!) {
+          R[k] = Rp[k]; changed.add(k); forced.add(k);
+        }
+      } else { Object.assign(R, Rp); cut = true; for (const k of changed) forced.add(k); }   // never raise memory while cutting
+    }
+    if (cut) {   // step 3: even R′ overflows at current max_connections, cut connections
       const nc = maxConn(R, J), inUse = Math.ceil(Math.max(c.used, c.peak ?? 0) / 10) * 10;
       if (nc < 20) memory.tooSmall = true;
       else if (nc < inUse) {   // a cut would reject live connections
         memory.tooSmall = true; memory.tooSmallReason = 'RAM terlalu kecil untuk jumlah koneksi yang sedang dipakai';
         advice.add(pooler);
         if (!isPg) advice.add('Turunkan wait_timeout (mis. 600 detik) supaya koneksi Sleep yang menganggur cepat ditutup.');
-      } else { R.max_connections = nc; changed.add('max_connections'); advice.add(pooler); }
+      } else { R.max_connections = nc; forced.add('max_connections'); advice.add(pooler); }
     }
     if (!memory.tooSmall) {
       const off = (k: string) => cur[k] < R[k] * 0.5 || cur[k] > R[k] * 1.5;
       const apply = (ks: string[]): Vals => ({ ...cur, ...Object.fromEntries(ks.map(k => [k, R[k]])) });
-      let shown = Object.keys(R).filter(k => (k !== 'max_connections' && off(k)) || (changed.has(k) && memory.overflow && R[k] !== cur[k]));
+      let shown = Object.keys(R).filter(k => (k !== 'max_connections' && off(k)) || (forced.has(k) && R[k] !== cur[k]));
       // Applying only some values can still overflow (e.g. raising a tiny work_mem).
-      if (worst(apply(shown)) > J && memory.overflow) shown = Object.keys(R).filter(k => R[k] !== cur[k]);   // R fits by construction
+      if (worst(apply(shown)) > J && cut) shown = Object.keys(R).filter(k => R[k] !== cur[k]);   // R′ with the cut fits by construction
       else if (worst(apply(shown)) > J) {
-        // Current fits: keep max_connections, pull listed increases back toward current (never below it) until it fits.
-        // Ends at current values at worst, which fit, so this always terminates within J.
+        // Current (with the forced decreases) fits: keep max_connections, pull listed increases back toward current
+        // (never below it) until it fits. Ends at those values at worst, which fit, so this always terminates within J.
         for (const k of isPg ? ['work_mem', 'shared_buffers', 'maintenance_work_mem'] : ['innodb_buffer_pool_size']) {
           const A = apply(shown), excess = worst(A) - J;
           const per = worst({ ...A, [k]: 1 }) - worst({ ...A, [k]: 0 });   // worst-case MB per MB of k
           if (excess <= 0 || !shown.includes(k) || A[k] <= cur[k] || per <= 0) continue;
-          const v = Math.floor((A[k] - excess / per) / (isPg ? 1 : 128)) * (isPg ? 1 : 128);
+          const v = isPg ? clean(A[k] - excess / per) : Math.floor((A[k] - excess / per) / 128) * 128;
           R[k] = v > cur[k] && v >= (k === 'work_mem' ? 4 : 0) ? v : cur[k]; changed.add(k);
           if (!off(k)) shown = shown.filter(x => x !== k);
         }
@@ -136,7 +152,7 @@ export function analyzeConfig(f: ServerFacts, m: ServerMemory, today: Date): Con
         const conn = k === 'max_connections';
         rec({ setting: k, value: conn ? String(R[k]) : formatSize(R[k]), mb: conn ? undefined : R[k] },
           conn ? String(cur[k]) : formatSize(cur[k]),
-          changed.has(k) && !conn ? 'Diturunkan supaya perkiraan memori terburuk muat di jatah RAM' : REASON[k]);
+          changed.has(k) && !conn ? `${R[k] < cur[k] ? 'Diturunkan' : 'Dibatasi'} supaya perkiraan memori terburuk muat di jatah RAM` : REASON[k]);
       }
     }
   }

@@ -64,10 +64,12 @@ test('current within 50-150% and no overflow -> not listed', () => {
   assert.ok(rec(r, 'work_mem'));
 });
 
-test('postgres 1GB, 500 connections -> max_connections 140 + PgBouncer, worst after fits', () => {
+test('postgres 1GB, 500 connections -> max_connections 170 + PgBouncer, worst after fits', () => {
+  // cut judged against min(current, R): shared_buffers stays 128MB, (1024 - 128 - 3×64) ÷ 4 = 176 -> 170
   const r = analyzeConfig(pg(500), mem(1024), today);
   assert.equal(r.memory.overflow, true);
-  assert.equal(rec(r, 'max_connections')?.suggested, '140');
+  assert.equal(rec(r, 'max_connections')?.suggested, '170');
+  assert.equal(rec(r, 'shared_buffers'), undefined);
   assert.equal(rec(r, 'max_connections')?.restart, true);
   for (const s of ['work_mem', 'maintenance_work_mem']) { const x = rec(r, s); if (x) assert.match(x.suggested, /^(4|64)MB$/); }
   assert.ok(r.connections.advice.some(a => a.includes('PgBouncer')));
@@ -209,13 +211,13 @@ test('R9a: current fits, recommended set does not -> no max_connections cut, shr
   assert.equal(rec(r, 'shared_buffers'), undefined);   // 512MB shrinks to 256MB, within 50-150% of 128MB
   const s = analyzeConfig(busy(400, 350, { shared_buffers: size(64, true) }), mem(4096, false), today);
   assert.equal(rec(s, 'shared_buffers')?.suggested, '256MB');
-  assert.match(rec(s, 'shared_buffers')!.reason, /^Diturunkan/);
+  assert.match(rec(s, 'shared_buffers')!.reason, /^Dibatasi/);   // shrunk, but still an increase over 64MB
   assert.equal(rec(s, 'max_connections'), undefined);
   assert.equal(s.memory.worstAfterMb, 2048);
 });
 
 test('R9b: overflow and fitting needs fewer connections than in use -> no cut, too-small message', () => {
-  const r = analyzeConfig(busy(500, 141), mem(1024), today);   // fit needs 140, in use rounds up to 150
+  const r = analyzeConfig(busy(500, 171), mem(1024), today);   // fit with min(current, R) needs 170, in use rounds up to 180
   assert.equal(r.memory.overflow, true);
   assert.equal(r.memory.tooSmall, true);
   assert.equal(r.memory.tooSmallReason, 'RAM terlalu kecil untuk jumlah koneksi yang sedang dipakai');
@@ -229,7 +231,7 @@ test('R9b: overflow and fitting needs fewer connections than in use -> no cut, t
 
 test('R9b: overflow with low usage -> cut not below max(used, peak) rounded up to 10', () => {
   const r = analyzeConfig(busy(500, 135), mem(1024), today);
-  assert.equal(rec(r, 'max_connections')?.suggested, '140');
+  assert.equal(rec(r, 'max_connections')?.suggested, '170');
   assert.ok(r.memory.worstAfterMb! <= 1024);
   const m = analyzeConfig(my('mysql', '8.0.39', {}, { connections: conns(100, { used: 10, peak: 55 }) }), mem(512), today);
   assert.equal(rec(m, 'max_connections')?.suggested, '60');
@@ -243,4 +245,47 @@ test('no raise advice while current settings overflow', () => {
   assert.equal(r.connections.warn, true);
   assert.ok(!r.connections.advice.some(a => a.includes('dinaikkan')), r.connections.advice.join('|'));
   assert.ok(r.connections.advice.some(a => a.includes('memori tidak cukup')));
+});
+
+// Overflow: lowering memory settings alone is preferred over a connection cut or the too-small verdict.
+const memOnly = (r: ReturnType<typeof analyzeConfig>, J: number) => {
+  assert.equal(r.memory.overflow, true);
+  assert.equal(r.memory.tooSmall, undefined);
+  assert.equal(rec(r, 'max_connections'), undefined);
+  assert.ok(r.memory.worstAfterMb! <= J, `worstAfter ${r.memory.worstAfterMb}`);
+  for (const x of r.recs) assert.notEqual(x.suggested, x.current);
+};
+test('overflow fixed by work_mem alone -> work_mem decrease, no cut, no too-small', () => {
+  for (const used of [160, 100]) {   // 128 + 170×4 + 3×64 = 1000 <= 1024
+    const r = analyzeConfig(busy(170, used, { work_mem: size(64) }), mem(1024), today);
+    memOnly(r, 1024);
+    assert.equal(rec(r, 'work_mem')?.suggested, '4MB');
+    assert.match(rec(r, 'work_mem')!.reason, /^Diturunkan/);
+    assert.equal(r.memory.worstAfterMb, 1000);
+  }
+});
+test('overflow fixed by shared_buffers alone -> shared_buffers decrease (the real cause)', () => {
+  const r = analyzeConfig(busy(100, 100, { shared_buffers: size(1024, true), work_mem: size(0.0625), autovacuum_max_workers: val('1', true) }),
+    mem(512, false), today);   // J = 256
+  memOnly(r, 256);
+  assert.equal(rec(r, 'shared_buffers')?.suggested, '64MB');
+  assert.equal(rec(r, 'work_mem'), undefined);
+});
+test('overflow from autovacuum_work_mem -> lowered to recommended maintenance_work_mem', () => {
+  const r = analyzeConfig(busy(100, 50, { autovacuum_work_mem: size(1024), autovacuum_max_workers: val('10', true) }), mem(2048), today);
+  memOnly(r, 2048);   // 128 + 400 + 10×1024 overflows; 10×102MB fits
+  assert.equal(rec(r, 'autovacuum_work_mem')?.suggested, '102MB');
+});
+test('even min(current, R) overflows at used connections -> too-small verdict still fires', () => {
+  const r = analyzeConfig(busy(500, 300, { work_mem: size(64) }), mem(1024), today);   // R′ fits 170, in use 300
+  assert.equal(r.memory.tooSmall, true);
+  assert.equal(r.memory.tooSmallReason, 'RAM terlalu kecil untuk jumlah koneksi yang sedang dipakai');
+  assert.ok(!r.recs.some(x => MEM_PG.includes(x.setting)));
+});
+test('shrunk postgres increases round down to whole 8MB', () => {
+  // J = 2010: shared_buffers 502MB would leave 2294MB; exact fit is 218MB, rounded down to 216MB
+  const r = analyzeConfig(busy(400, 350, { shared_buffers: size(64, true) }), mem(4020, false), today);
+  assert.equal(rec(r, 'shared_buffers')?.suggested, '216MB');
+  assert.match(rec(r, 'shared_buffers')!.reason, /^Dibatasi/);
+  assert.ok(r.memory.worstAfterMb! <= 2010);
 });
