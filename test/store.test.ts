@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, readdir, stat, chmod, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, readdir, stat, chmod, rm, symlink, lstat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { storePath, loadConnections, saveConnection, removeConnection, connectionUrl, StoreError, type SavedConnection } from '../src/store.js';
@@ -19,7 +19,7 @@ test('storePath', () => {
   assert.equal(storePath({}, '/home/u'), '/home/u/.dbb/databases.json');
 });
 
-test('saveConnection replaces in place, keeps foreign fields and other entries', async () => {
+test('saveConnection replaces in place, keeps only bulk of the old entry and other entries untouched', async () => {
   const p = join(dir, 'one', 'databases.json');
   const a = { ...base, name: 'a', bulk: true, x: { y: 1 } };
   const b = { ...base, name: 'b', extra: [1] };
@@ -33,7 +33,7 @@ test('saveConnection replaces in place, keeps foreign fields and other entries',
   assert.deepEqual(out.map((e: any) => e.name), ['a', 'b']);
   assert.equal(out[0].host, 'new');
   assert.equal(out[0].bulk, true);
-  assert.deepEqual(out[0].x, { y: 1 });
+  assert.equal('x' in out[0], false);
   assert.deepEqual(out[1], b);
   assert.equal((await stat(p)).mode & 0o777, 0o600);
   assert.deepEqual((await readdir(join(dir, 'one'))).filter(f => f.includes('.tmp')), []);
@@ -122,4 +122,25 @@ test('hidden first entry shadows a valid duplicate; save/remove hit the same raw
   await write();
   assert.equal(await removeConnection(p, 'a'), true);
   assert.equal(await readFile(p, 'utf8'), JSON.stringify([dup], null, 2) + '\n');
+});
+
+test('entries with non-string or invalid fields are hidden and kept as-is on write', async () => {
+  const p = join(dir, 'bad', 'databases.json');
+  const bad = [{ ...base, name: 123 }, { ...base, name: 'x', port: 'abc' }, { ...base, name: 'y', port: 70000 }, { ...base, name: 'z', password: 5 }, { ...base, name: 'w', ssl: true }];
+  await saveConnection(p, conn('seed'));
+  await writeFile(p, JSON.stringify(bad));
+  assert.deepEqual((await loadConnections(p)).connections, []);
+  await saveConnection(p, conn('ok'));
+  assert.deepEqual(JSON.parse(await readFile(p, 'utf8')).slice(0, 5), bad);
+  await writeFile(p, JSON.stringify([{ ...base, name: 's', port: '5433' }]));
+  assert.equal((await loadConnections(p)).connections[0].port, 5433);
+});
+
+test('saving through a symlink updates the target and keeps the link', async () => {
+  const real = join(dir, 'real.json'), link = join(dir, 'link.json');
+  await saveConnection(real, conn('a'));
+  await symlink(real, link);
+  await saveConnection(link, conn('b'));
+  assert.ok((await lstat(link)).isSymbolicLink());
+  assert.deepEqual(JSON.parse(await readFile(real, 'utf8')).map((e: any) => e.name), ['a', 'b']);
 });

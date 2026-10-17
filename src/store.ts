@@ -1,4 +1,4 @@
-import { readFile, writeFile, rename, chmod, mkdir, stat, rm } from 'node:fs/promises';
+import { readFile, writeFile, rename, chmod, mkdir, stat, rm, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -34,11 +34,19 @@ export async function loadConnections(path: string): Promise<{ connections: Save
   const connections: SavedConnection[] = [];
   for (const e of raw) {
     if (!isObj(e)) continue;
-    if (e.name && seen.has(e.name)) continue;
-    if (e.name) seen.add(e.name); // a hidden first entry shadows later duplicates, like save/remove
-    if (!e.name || !e.host || !e.user || !e.database) continue;
+    if (typeof e.name === 'string' && e.name) {
+      if (seen.has(e.name)) continue;
+      seen.add(e.name); // a hidden first entry shadows later duplicates, like save/remove
+    }
+    const str = (v: unknown) => typeof v === 'string' && v !== '';
+    if (!str(e.name) || !str(e.host) || !str(e.user) || !str(e.database)) continue;
     if (e.type !== 'postgres' && e.type !== 'mysql') continue;
-    connections.push({ ...e, port: e.port || DEFAULT_PORT[e.type as 'postgres' | 'mysql'], password: e.password ?? '' } as SavedConnection);
+    const port = e.port ? (typeof e.port === 'string' && /^\d+$/.test(e.port) ? Number(e.port) : e.port) : DEFAULT_PORT[e.type as 'postgres' | 'mysql'];
+    if (!Number.isInteger(port) || port < 1 || port > 65535) continue;
+    const password = e.password ?? '';
+    if (typeof password !== 'string') continue;
+    if ((e.ssl !== undefined && typeof e.ssl !== 'string') || (e.version !== undefined && typeof e.version !== 'string')) continue;
+    connections.push({ ...e, port, password } as SavedConnection);
   }
   const warnings: string[] = [];
   try {
@@ -47,7 +55,8 @@ export async function loadConnections(path: string): Promise<{ connections: Save
   return { connections, warnings };
 }
 
-async function writeAll(path: string, list: unknown[]): Promise<void> {
+async function writeAll(link: string, list: unknown[]): Promise<void> {
+  const path = await realpath(link).catch(() => link); // write through a symlink, keep the link
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.tmp`;
   try {
@@ -63,7 +72,7 @@ async function writeAll(path: string, list: unknown[]): Promise<void> {
 export async function saveConnection(path: string, c: SavedConnection): Promise<void> {
   const raw = await readRaw(path);
   const i = raw.findIndex(e => isObj(e) && e.name === c.name);
-  if (i >= 0) raw[i] = { ...(raw[i] as object), ...c }; else raw.push(c);
+  if (i >= 0) { const bulk = (raw[i] as any).bulk; raw[i] = bulk === undefined ? c : { ...c, bulk }; } else raw.push(c);
   await writeAll(path, raw);
 }
 
