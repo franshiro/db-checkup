@@ -6,12 +6,21 @@ CLI untuk memeriksa database Postgres dan MySQL/MariaDB: query paling lambat, sa
 
 ## Install
 
+Butuh Node 20.12 atau lebih baru, dan git.
+
 ```sh
-npm install && npm run build && npm install -g .   # dari repo ini
-npx db-checkup ...    # setelah dipublish
+curl -fsSL https://raw.githubusercontent.com/franshiro/db-checkup/main/install.sh | bash
 ```
 
-Butuh Node 20.12 atau lebih baru.
+Script mengunduh repo ke `~/.db-checkup`, build, lalu memasang perintah `db-checkup` secara global. Jalankan ulang perintah yang sama untuk update. Folder lain bisa dipilih lewat `DB_CHECKUP_DIR=/opt/db-checkup`. Kalau npm global butuh root, pakai `... | sudo bash`.
+
+Dari repo yang sudah di-clone:
+
+```sh
+./install.sh
+# atau manual:
+npm install && npm run build && npm install -g .
+```
 
 ## Pemakaian
 
