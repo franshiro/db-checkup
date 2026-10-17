@@ -3,6 +3,7 @@ import { parseArgs } from 'node:util';
 import { realpathSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { parseConnectionUrl, redactUrl } from './connection.js';
 import type { ConnectionConfig } from './connection.js';
 import { createPostgresAdapter } from './adapters/postgres.js';
@@ -16,6 +17,7 @@ import { addFromEnv, addManual } from './add.js';
 import { connectionUrl, loadConnections, removeConnection, storePath } from './store.js';
 import { confirm, select } from './tui.js';
 import type { Term } from './tui.js';
+import { runMenu } from './menu.js';
 
 type Out = { write(s: string): void; isTTY?: boolean };
 
@@ -86,14 +88,15 @@ export async function main(argv: string[], env: Record<string, string | undefine
   const { values, positionals } = parsed;
 
   if (values.help) { stdout.write(USAGE); return 0; }
-  if (values.version) {
-    const { createRequire } = await import('node:module');
-    stdout.write(`${createRequire(import.meta.url)('../package.json').version}\n`);
-    return 0;
-  }
+  const version = (): string => createRequire(import.meta.url)('../package.json').version;
+  if (values.version) { stdout.write(`${version()}\n`); return 0; }
   const sp = deps.storePath ?? storePath(env);
   const term: Term | null = io.stdin?.isTTY && stdout.isTTY
     ? { input: io.stdin, output: stdout, color: !!stdout.isTTY && !env.NO_COLOR } : null;
+  if (!argv.length && term) return runMenu({
+    term, env, cwd: process.cwd(), storePath: sp, version: version(), createAdapter: deps.createAdapter, now: () => new Date(),
+    onInterrupt: cb => { process.on('SIGINT', cb); return () => { process.off('SIGINT', cb); }; },
+  });
   const cmd = positionals[0];
   const wrap = async (f: () => Promise<number>) => {
     try { return await f(); } catch (err) {

@@ -36,11 +36,12 @@ async function keys<T>(t: Term, on: (str: string | undefined, key: Key) => T | u
 const cancelKey = (k: Key) => k.name === 'escape' || (k.ctrl === true && k.name === 'c');
 
 export async function select(
-  t: Term, title: string, items: Item[], opts: { initial?: number; keys?: string[] } = {},
+  t: Term, title: string, items: Item[], opts: { initial?: number; keys?: (string | { key: string; label: string })[] } = {},
 ): Promise<{ index: number; key: string } | null> {
-  const extra = opts.keys ?? [];
+  const extraKeys = (opts.keys ?? []).map((k) => typeof k === 'string' ? { key: k, label: k } : k);
+  const extra = extraKeys.map((k) => k.key);
   const w = width(t);
-  const help = clip(['↑↓ pilih', 'Enter buka', ...extra.map((k) => `${k} ${k}`), 'q keluar'].join(' · '), w);
+  const help = clip(['↑↓ pilih', 'Enter buka', ...extraKeys.map((k) => `${k.key} ${k.label}`), 'q keluar'].join(' · '), w);
   const n = items.length;
   let cur = Math.min(Math.max(opts.initial ?? 0, 0), Math.max(n - 1, 0));
   let top = 0, drawn = 0;

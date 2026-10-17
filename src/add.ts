@@ -18,7 +18,7 @@ export interface AddDeps {
   out: { write(s: string): void };
 }
 type Type = 'postgres' | 'mysql';
-const DEFAULTS: Record<Type, { port: number; user: string }> = { postgres: { port: 5432, user: 'postgres' }, mysql: { port: 3306, user: 'root' } };
+export const DEFAULTS: Record<Type, { port: number; user: string }> = { postgres: { port: 5432, user: 'postgres' }, mysql: { port: 3306, user: 'root' } };
 
 export async function testConnection(d: AddDeps, c: SavedConnection): Promise<{ version: string } | { error: string }> {
   const url = connectionUrl(c);
