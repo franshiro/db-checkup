@@ -166,3 +166,13 @@ test('overwrite keeps dedicated/ram_mb unless host or port changed; bulk always'
   a = JSON.parse(await readFile(p, 'utf8'))[0];
   assert.deepEqual([a.bulk, a.dedicated, a.ram_mb], [true, undefined, undefined]);
 });
+
+test('overwrite: new dedicated/ram_mb in c win; portless old entry counts as default port', async () => {
+  const p = join(dir, 'new', 'databases.json');
+  await saveConnection(p, conn('seed'));
+  await writeFile(p, JSON.stringify([{ ...base, name: 'a', dedicated: false, ram_mb: 4096 }, { ...base, port: undefined, name: 'b', dedicated: false, ram_mb: 4096 }]));
+  await saveConnection(p, conn('a', { dedicated: true, ram_mb: 8192 }));
+  await saveConnection(p, conn('b'));
+  const [a, b] = JSON.parse(await readFile(p, 'utf8'));
+  assert.deepEqual([a.dedicated, a.ram_mb, b.dedicated, b.ram_mb], [true, 8192, false, 4096]);
+});

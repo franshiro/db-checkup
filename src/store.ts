@@ -28,6 +28,9 @@ async function readRaw(path: string): Promise<unknown[]> {
 
 const isObj = (x: unknown): x is Record<string, any> => typeof x === 'object' && x !== null && !Array.isArray(x);
 
+const effPort = (e: Record<string, any>) =>
+  e.port ? (typeof e.port === 'string' && /^\d+$/.test(e.port) ? Number(e.port) : e.port) : DEFAULT_PORT[e.type as 'postgres' | 'mysql'];
+
 export async function loadConnections(path: string): Promise<{ connections: SavedConnection[]; warnings: string[] }> {
   const raw = await readRaw(path);
   const seen = new Set<string>();
@@ -41,7 +44,7 @@ export async function loadConnections(path: string): Promise<{ connections: Save
     const str = (v: unknown) => typeof v === 'string' && v !== '';
     if (!str(e.name) || !str(e.host) || !str(e.user) || !str(e.database)) continue;
     if (e.type !== 'postgres' && e.type !== 'mysql') continue;
-    const port = e.port ? (typeof e.port === 'string' && /^\d+$/.test(e.port) ? Number(e.port) : e.port) : DEFAULT_PORT[e.type as 'postgres' | 'mysql'];
+    const port = effPort(e);
     if (!Number.isInteger(port) || port < 1 || port > 65535) continue;
     const password = e.password ?? '';
     if (typeof password !== 'string') continue;
@@ -75,10 +78,10 @@ export async function saveConnection(path: string, c: SavedConnection): Promise<
   const raw = await readRaw(path);
   const i = raw.findIndex(e => isObj(e) && e.name === c.name);
   if (i >= 0) {
-    const old = raw[i] as any, same = old.host === c.host && Number(old.port) === c.port;
+    const old = raw[i] as any, same = old.host === c.host && effPort(old) === c.port;
     const keep: Record<string, unknown> = { bulk: old.bulk, ...(same ? { dedicated: old.dedicated, ram_mb: old.ram_mb } : {}) };
     for (const k of Object.keys(keep)) if (keep[k] === undefined) delete keep[k];
-    raw[i] = { ...c, ...keep };
+    raw[i] = { ...keep, ...c };   // old values only fill what c lacks
   } else raw.push(c);
   await writeAll(path, raw);
 }

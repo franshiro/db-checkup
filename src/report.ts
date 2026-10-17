@@ -24,11 +24,11 @@ function configBlocks(c: ConfigResult): Block[] {
   for (const a of k.advice) b.push(text(a, 'warn'));
   if (k.groups.length) b.push({ kind: 'table', headers: ['Database', 'User', 'Aplikasi', 'Status', 'Jumlah', 'Idle lama'],
     rows: k.groups.map(g => [g.database ?? '-', g.user, g.app || '-', g.state, formatCount(g.count), formatCount(g.idleLong)]) });
-  if (k.partial) b.push(text('Data koneksi sebagian: hak akses terbatas, hanya sesi milik user ini yang terlihat.', 'warn'));
-  const ram = m.totalMb === undefined ? 'tidak diketahui' : `${formatSize(m.totalMb)} (${m.source ?? '-'})`;
+  if (k.partial) b.push(text(`Data koneksi sebagian (${c.flavor === 'postgres' ? 'butuh role pg_read_all_stats' : 'butuh PROCESS'}): hak akses terbatas, hanya sesi milik user ini yang terlihat.`, 'warn'));
+  const ram = m.totalMb === undefined ? 'tidak diketahui' : `${formatSize(m.totalMb)} (${{ lokal: 'dibaca dari mesin ini', manual: 'diisi manual', flag: '--ram' }[m.source ?? 'flag']})`;
   b.push(text(`Total RAM: ${ram}${m.availableMb !== undefined ? `, tersedia ${formatSize(m.availableMb)}` : ''}. Jenis: ${m.dedicated ? 'khusus database' : 'berbagi'}.`));
   if (m.quotaMb !== undefined) b.push(text(`Jatah RAM: ${formatSize(m.quotaMb)}. Perkiraan terburuk sekarang: ${formatSize(m.worstMb)}.`));
-  if (m.overflow) b.push(text('Dalam kondisi terburuk, setting memori bisa melebihi RAM.', 'warn'));
+  if (m.overflow) b.push(text('Dalam kondisi terburuk, setting memori bisa melebihi RAM (perkiraan pesimis: semua koneksi memakai buffer maksimum bersamaan).', 'warn'));
   if (m.tooSmall) b.push(text(`RAM terlalu kecil untuk setting minimal (jatah ${formatSize(m.quotaMb ?? 0)}).`, 'warn'));
   if (m.skipped) b.push(text(m.skipped));
   if (c.recs.length) b.push({ kind: 'table', headers: ['Setting', 'Sekarang', 'Disarankan', 'Alasan', 'Restart'],
