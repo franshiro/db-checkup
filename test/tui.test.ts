@@ -77,3 +77,12 @@ test('scrolls long list', async () => {
 test('logo has version', () => {
   assert.ok(strip(logo(mk().t, '1.2.3')).includes('v1.2.3'));
 });
+
+test('select: help line shows quitLabel, default keluar', async () => {
+  const m = mk(); m.send('q');
+  await select(m.t, 'T', items, { quitLabel: 'kembali' });
+  assert.ok(strip(m.out()).includes('q kembali'));
+  const n = mk(); n.send('q');
+  await select(n.t, 'T', items);
+  assert.ok(strip(n.out()).includes('q keluar'));
+});

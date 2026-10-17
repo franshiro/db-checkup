@@ -212,3 +212,48 @@ test('d removes a saved connection after confirm; d on a .env row does nothing',
   assert.equal(h.out().split('Hapus "').length - 1, 1);
   assert.ok(h.out().includes('d hapus'));
 });
+
+test('store with non-string fields: screen 1 renders and q exits 0; list exits 0', async () => {
+  await saveConnection(sp, prod);
+  await writeFile(sp, JSON.stringify([{ ...prod, name: 123 }, { ...prod, name: 'x', port: 'abc' }, prod]));
+  const { h, run } = harness();
+  const p = run();
+  await h.until('Pilih database');
+  await h.keys('q');
+  assert.equal(await p, 0);
+  assert.ok(!h.out().includes('Error'));
+  const { main } = await import('../src/cli.js');
+  const so: string[] = [];
+  const w = { write: (s: string) => { so.push(s); return true; } } as any;
+  const io = { stdout: w, stderr: w };
+  assert.equal(await main(['list'], {}, io, { createAdapter: async () => fakeAdapter(), storePath: sp }), 0);
+});
+
+test('env DATABASE_URL is analyzed as given, keeping query params', async () => {
+  const url = 'postgres://u:p@envhost/db?sslmode=require&sslrootcert=/x/ca.pem';
+  let seen = '';
+  const { h, run } = harness({ env: { DATABASE_URL: url }, createAdapter: async c => { seen = (c as any).url; return fakeAdapter(); } });
+  const p = run();
+  await h.keys('\r');
+  await h.until('dbc ›');
+  assert.ok(seen.includes('sslrootcert=/x/ca.pem'));
+  await h.keys('q', 'q');
+  assert.equal(await p, 0);
+});
+
+test('report path with ~ expands to the home directory', async () => {
+  await saveConnection(sp, prod);
+  const oldHome = process.env.HOME; process.env.HOME = dir; // keep the test inside its temp dir
+  const { homedir } = await import('node:os');
+  const name = `dbc-tilde-${process.pid}.md`;
+  const { h, run } = harness();
+  const p = run();
+  try {
+    await h.keys('\r', '\r', '\r');
+    await h.keys(...Array(40).fill('\x7f'), ...('~/' + name), '\r');
+    await h.until('Tersimpan');
+    assert.ok(h.out().includes(join(homedir(), name)));
+  } finally { process.env.HOME = oldHome; }
+  await h.keys('q', 'q');
+  await p;
+});

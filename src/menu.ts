@@ -1,4 +1,5 @@
 import { access, readFile, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseConnectionUrl, redactUrl } from './connection.js';
 import type { ConnectionConfig } from './connection.js';
@@ -25,7 +26,7 @@ export interface MenuDeps {
 }
 
 // `from` set = not saved (row from .env or env DATABASE_URL); conn is then an EnvCandidate.
-interface Row { name: string; from?: string; conn: SavedConnection | EnvCandidate }
+interface Row { name: string; from?: string; url?: string; conn: SavedConnection | EnvCandidate }
 
 const CHOICES: { label: string; parts?: AnalysisPart[]; watch?: true }[] = [
   { label: 'Laporan lengkap' },
@@ -46,12 +47,12 @@ const stamp = (n: Date) => `${n.getFullYear()}${p2(n.getMonth() + 1)}${p2(n.getD
 async function envRows(d: MenuDeps, saved: SavedConnection[]): Promise<Row[]> {
   const known = new Set(saved.map(key));
   const rows: Row[] = [];
-  const add = (from: string, name: string, c: EnvCandidate) => {
+  const add = (from: string, name: string, c: EnvCandidate, url?: string) => {
     if (known.has(key(c))) return;
     known.add(key(c));
-    rows.push({ name, from, conn: c });
+    rows.push({ name, from, url, conn: c });
   };
-  if (d.env.DATABASE_URL) for (const c of envCandidates({ DATABASE_URL: d.env.DATABASE_URL })) add('dari env DATABASE_URL', 'database-url', c);
+  if (d.env.DATABASE_URL) for (const c of envCandidates({ DATABASE_URL: d.env.DATABASE_URL })) add('dari env DATABASE_URL', 'database-url', c, d.env.DATABASE_URL);
   const path = join(d.cwd, '.env');
   let text = '';
   try { text = await readFile(path, 'utf8'); } catch { /* tidak ada .env */ }
@@ -65,7 +66,7 @@ async function toSaved(t: Term, r: Row): Promise<SavedConnection | null> {
   const c = r.conn as EnvCandidate;
   let type = c.type;
   if (!type) {
-    const s = await select(t, `Jenis untuk ${r.name}?`, [{ label: 'postgres' }, { label: 'mysql' }]);
+    const s = await select(t, `Jenis untuk ${r.name}?`, [{ label: 'postgres' }, { label: 'mysql' }], { quitLabel: 'kembali' });
     if (!s) return null;
     type = s.index ? 'mysql' : 'postgres';
   }
@@ -116,10 +117,15 @@ export async function runMenu(d: MenuDeps): Promise<number> {
         } else {
           const c = await toSaved(t, row);
           if (!c) continue;
-          r = await session(d, c.name, connectionUrl(c), row.from ? c : undefined);
+          r = await session(d, c.name, row.url ?? connectionUrl(c), row.from ? c : undefined);
         }
         if (r === 'quit') return 0;
-      } catch (err) { out(`Error: ${msg(err)}\n`); }
+      } catch (err) {
+        out(`Error: ${redact(msg(err), d.env.DATABASE_URL)}\n`);
+        // never re-loop without user input
+        const a = await select(t, 'Terjadi error', [{ label: 'Coba lagi' }, { label: 'Keluar' }]);
+        if (!a || a.index === 1) return 1;
+      }
     }
   } finally {
     t.input.setRawMode?.(false);
@@ -128,7 +134,7 @@ export async function runMenu(d: MenuDeps): Promise<number> {
 }
 
 async function addMenu(d: MenuDeps): Promise<void> {
-  const s = await select(d.term, 'Tambah koneksi', [{ label: 'dari .env', desc: join(d.cwd, '.env') }, { label: 'manual' }]);
+  const s = await select(d.term, 'Tambah koneksi', [{ label: 'dari .env', desc: join(d.cwd, '.env') }, { label: 'manual' }], { quitLabel: 'kembali' });
   if (!s) return;
   const deps = { term: d.term, storePath: d.storePath, createAdapter: d.createAdapter, out: d.term.output };
   if (s.index === 0) await addFromEnv(deps, d.cwd); else await addManual(deps);
@@ -165,7 +171,7 @@ async function session(d: MenuDeps, name: string, url: string, unsaved?: SavedCo
 
     for (;;) {
       const items = [...CHOICES, ...(unsaved ? [{ label: 'Simpan koneksi ini' }] : []), { label: '← Kembali' }];
-      const s = await select(t, `dbc › ${name} (${info.flavor} ${info.version})`, items);
+      const s = await select(t, `dbc › ${name} (${info.flavor} ${info.version})`, items, { quitLabel: 'kembali' });
       if (!s || s.index === items.length - 1) return 'back';
       if (s.index === CHOICES.length) {
         await guard(async () => { if (await saveRow(d, unsaved!, info.version)) unsaved = undefined; });
@@ -184,7 +190,7 @@ async function session(d: MenuDeps, name: string, url: string, unsaved?: SavedCo
         if (!result) break;
         const report = buildReport(result, { mask: true });
         out(renderTerminal(report, { color: t.color }));
-        const a = await select(t, 'Selanjutnya', [{ label: 'Simpan ke .md' }, { label: 'Jalankan lagi' }, { label: 'Kembali ke menu' }, { label: 'Keluar' }]);
+        const a = await select(t, 'Selanjutnya', [{ label: 'Simpan ke .md' }, { label: 'Jalankan lagi' }, { label: 'Kembali ke menu' }, { label: 'Keluar' }], { quitLabel: 'kembali' });
         if (a?.index === 1) continue;
         if (a?.index === 3) return 'quit';
         if (a?.index === 0) await guard(() => saveReport(d, name, report));
@@ -199,7 +205,7 @@ async function session(d: MenuDeps, name: string, url: string, unsaved?: SavedCo
 async function saveReport(d: MenuDeps, name: string, report: Report): Promise<void> {
   const f = await ask(d.term, 'Nama file', { default: `./${name.replace(/[^A-Za-z0-9._-]/g, '-')}-${stamp(d.now())}.md` });
   if (!f) return;
-  const path = resolve(d.cwd, f);
+  const path = resolve(d.cwd, f === '~' || f.startsWith('~/') ? homedir() + f.slice(1) : f);
   if (await exists(path) && !await confirm(d.term, `${path} sudah ada, timpa?`)) return;
   await writeFile(path, renderMarkdown(report));
   d.term.output.write(`Tersimpan: ${path}\n`);
